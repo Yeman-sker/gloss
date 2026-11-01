@@ -55,7 +55,7 @@ func (p *panel) apply(ev core.Event) {
 		b := &p.blocks[ev.Index]
 		b.chunks = append(b.chunks, chunk{ev.Delta, time.Now()})
 	case core.EventError:
-		p.failed = ev.Err.Error()
+		p.failed = "翻译失败：" + ev.Err.Error()
 	}
 }
 
@@ -105,7 +105,7 @@ func (p *panel) view(before func(*ui.Context)) func(*ui.Context) {
 				el.Transition(ui.ElementTransition{Animation: &ui.Snappy, Enter: &ui.Motion{Y: 6}})
 			}
 			if p.failed != "" {
-				ui.Text(c, p.failed).FontSize(13).TextColor(t.TextMuted)
+				ui.Text(c, p.failed).FontSize(13).LineHeight(1.45).TextColor(t.Danger).Selectable()
 			}
 			if fading {
 				c.Invalidate()

@@ -14,7 +14,7 @@ import (
 
 	"gloss/capture"
 	"gloss/core"
-	"gloss/providers/demo"
+	"gloss/providers/openai"
 )
 
 // Name is the working name of the product: change it here and in mygo.json.
@@ -23,6 +23,8 @@ const Name = "Gloss"
 const (
 	shortcut = "Alt+Shift+D"
 	escape   = "Escape"
+
+	defaultBaseURL = "https://api.openai.com/v1"
 )
 
 // shell ties the shortcut, the helper and the engine to the panel.
@@ -37,14 +39,15 @@ type shell struct {
 // Run starts the app and returns when it ends.
 func Run() error {
 	engine := core.NewEngine()
-	if err := engine.Register(demo.Action{}); err != nil {
+	translate := translator()
+	if err := engine.Register(translate); err != nil {
 		return err
 	}
 	helper, err := capture.Start(capture.Path())
 	if err != nil {
 		return err
 	}
-	s := &shell{helper: helper, engine: engine, action: demo.Action{}.ID()}
+	s := &shell{helper: helper, engine: engine, action: translate.ID()}
 
 	// The panel refuses to close, which holds App.Quit up: end directly.
 	stop := make(chan os.Signal, 1)
@@ -78,6 +81,16 @@ func Run() error {
 		log.Printf("ready: %s", shortcut)
 	})
 	return mygo.App.Run()
+}
+
+// translator reads the service from the environment until there is a config
+// file. A missing key or model is reported by the action, in the panel.
+func translator() openai.Action {
+	base := os.Getenv("OPENAI_BASE_URL")
+	if base == "" {
+		base = defaultBaseURL
+	}
+	return openai.Action{BaseURL: base, APIKey: os.Getenv("OPENAI_API_KEY"), Model: os.Getenv("OPENAI_MODEL")}
 }
 
 // trigger reads the selection and starts the action on it.

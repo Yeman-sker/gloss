@@ -17,6 +17,16 @@
 
 结束程序：在终端按 Ctrl+C。
 
+## 翻译服务配置
+
+配置文件完成之前（GLO-2），从启动终端的环境变量读取：
+
+| 变量 | 说明 |
+|---|---|
+| `OPENAI_API_KEY` | 必填，缺少时面板会提示 |
+| `OPENAI_MODEL` | 必填，缺少时面板会提示。不内置默认值，模型会下线，各家名称也不同 |
+| `OPENAI_BASE_URL` | 可选，默认 `https://api.openai.com/v1`。写到版本号为止，程序会追加 `/chat/completions` |
+
 ## 规划（Linear）
 
 [Linear 的 GLO 团队](https://linear.app/yeman/team/GLO/overview) 是规划的地方，`docs/` 是记录的地方。

@@ -2,13 +2,16 @@
 
 轻量、现代、动效精致的跨平台桌面划词工具。选中文字，按下快捷键，在不打断当前工作的情况下得到翻译或解释。
 
-> **状态：** 脚手架阶段，只有演示数据，还不能真正翻译。进度见 [docs/STATUS.md](docs/STATUS.md)。
+> **状态：** 早期开发，已接入 OpenAI 兼容接口，尚未对真实服务验证。进度见 [docs/STATUS.md](docs/STATUS.md)。
 
 ## 快速开始
 
 需要 Go 1.27.3+ 和 Rust。目前只有 macOS 能取词，Windows 尚未实现。
 
 ```bash
+export OPENAI_API_KEY=你的Key
+export OPENAI_MODEL=模型名称
+export OPENAI_BASE_URL=https://api.openai.com/v1  # 可选，其他兼容服务改这里
 make run
 ```
 
