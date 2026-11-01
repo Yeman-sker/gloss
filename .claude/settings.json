@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(make check)",
+      "Bash(make test)",
+      "Bash(make build)",
+      "Bash(go test:*)",
+      "Bash(go vet:*)",
+      "Bash(go build:*)",
+      "Bash(gofmt:*)",
+      "Bash(cargo build:*)",
+      "Bash(cargo test:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat docs/STATUS.md"
+          }
+        ]
+      }
+    ]
+  }
+}

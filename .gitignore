@@ -1,0 +1,7 @@
+/bin/
+/build/
+/.mygo/
+mygo_windows_*.syso
+/capture/helper/target/
+.claude/settings.local.json
+.DS_Store
