@@ -14,7 +14,6 @@ import (
 
 	"gloss/capture"
 	"gloss/core"
-	"gloss/providers/openai"
 )
 
 // Name is the working name of the product: change it here and in mygo.json.
@@ -23,8 +22,6 @@ const Name = "Gloss"
 const (
 	shortcut = "Alt+Shift+D"
 	escape   = "Escape"
-
-	defaultBaseURL = "https://api.openai.com/v1"
 )
 
 // shell ties the shortcut, the helper and the engine to the panel.
@@ -39,7 +36,7 @@ type shell struct {
 // Run starts the app and returns when it ends.
 func Run() error {
 	engine := core.NewEngine()
-	translate := translator()
+	translate := translator{}
 	if err := engine.Register(translate); err != nil {
 		return err
 	}
@@ -83,16 +80,6 @@ func Run() error {
 	return mygo.App.Run()
 }
 
-// translator reads the service from the environment until there is a config
-// file. A missing key or model is reported by the action, in the panel.
-func translator() openai.Action {
-	base := os.Getenv("OPENAI_BASE_URL")
-	if base == "" {
-		base = defaultBaseURL
-	}
-	return openai.Action{BaseURL: base, APIKey: os.Getenv("OPENAI_API_KEY"), Model: os.Getenv("OPENAI_MODEL")}
-}
-
 // trigger reads the selection and starts the action on it.
 func (s *shell) trigger() {
 	r, err := s.helper.Selection()
@@ -111,8 +98,7 @@ func (s *shell) trigger() {
 		s.engine.Cancel()
 		return
 	}
-	req := core.Request{Text: text, Context: core.Context{TargetLang: "zh-Hans"}}
-	_, err = s.engine.Start(s.action, req, func(ev core.Event) {
+	_, err = s.engine.Start(s.action, core.Request{Text: text}, func(ev core.Event) {
 		s.win.Update(func() { s.panel.apply(ev) })
 	})
 	if err != nil {

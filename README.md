@@ -8,10 +8,18 @@
 
 需要 Go 1.27.3+ 和 Rust。目前只有 macOS 能取词，Windows 尚未实现。
 
+先创建配置文件 `~/Library/Application Support/Gloss/config.json`（字段和其他平台路径见[开发约定](docs/DEVELOPMENT.md#翻译服务配置)）：
+
+```json
+{
+  "api_key": "你的Key",
+  "model": "模型名称"
+}
+```
+
+然后运行：
+
 ```bash
-export OPENAI_API_KEY=你的Key
-export OPENAI_MODEL=模型名称
-export OPENAI_BASE_URL=https://api.openai.com/v1  # 可选，其他兼容服务改这里
 make run
 ```
 

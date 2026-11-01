@@ -19,13 +19,31 @@
 
 ## 翻译服务配置
 
-配置文件完成之前（GLO-2），从启动终端的环境变量读取：
+手动编辑用户配置目录下的 `Gloss/config.json`，不要放进仓库。每次翻译都会重新读取，改完不用重启。
 
-| 变量 | 说明 |
+| 平台 | 路径 |
 |---|---|
-| `OPENAI_API_KEY` | 必填，缺少时面板会提示 |
-| `OPENAI_MODEL` | 必填，缺少时面板会提示。不内置默认值，模型会下线，各家名称也不同 |
-| `OPENAI_BASE_URL` | 可选，默认 `https://api.openai.com/v1`。写到版本号为止，程序会追加 `/chat/completions` |
+| macOS | `~/Library/Application Support/Gloss/config.json` |
+| Windows | `%AppData%\Gloss\config.json` |
+| Linux | `$XDG_CONFIG_HOME/Gloss/config.json`，默认 `~/.config/Gloss/config.json` |
+
+```json
+{
+  "api_key": "你的Key",
+  "base_url": "https://api.openai.com/v1",
+  "model": "模型名称",
+  "target_lang": "zh-Hans"
+}
+```
+
+| 字段 | 说明 |
+|---|---|
+| `api_key` | 必填，缺少时面板会提示 |
+| `model` | 必填，缺少时面板会提示。不内置默认值，模型会下线，各家名称也不同 |
+| `base_url` | 可选，默认 `https://api.openai.com/v1`。写到版本号为止，程序会追加 `/chat/completions` |
+| `target_lang` | 可选，默认 `zh-Hans` |
+
+文件里是明文 Key，macOS 和 Linux 上建议 `chmod 600`。
 
 ## 规划（Linear）
 
