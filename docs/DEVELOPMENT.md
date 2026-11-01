@@ -17,11 +17,35 @@
 
 结束程序：在终端按 Ctrl+C。
 
+## 规划（Linear）
+
+[Linear 的 GLO 团队](https://linear.app/yeman/team/GLO/overview) 是规划的地方，`docs/` 是记录的地方。
+
+1. **先讨论：** 开发者和 Agent 一起讨论计划。
+2. **再落到 Linear：** 把讨论结果写成 issue，用户同意后 Agent 才能创建或调整。
+3. **逐步打磨：** 随着理解加深，持续调整 issue 的范围、顺序和拆分。
+4. **事后记录：** 工作完成后，把事实写回 `docs/`。
+
+| 状态 | 含义 |
+|---|---|
+| Backlog | 想做，还没排期 |
+| Todo | 已决定要做 |
+| In Progress | 有人正在做 |
+| In Review | 代码已完成，等待评审或合并 |
+| Done | 已合并且验证通过 |
+| Canceled / Duplicate | 不做或重复，写明原因 |
+
+约定：
+
+- 按 issue 开工时，先把状态切到 In Progress 并指派给自己，避免撞车。
+- 工作中发现的新问题先告诉用户，不要自行建 issue，也不要顺手扩大范围。
+- 关闭 issue 前写验证结果：运行了什么，在什么平台，什么没验证。
+- 长期有效的结论写进 `docs/`，不要只留在 issue 里。
+
 ## 协作
 
-- `main` 始终可构建。功能在分支上开发，分支名如 `feat/openai-action`、`fix/panel-height`。
-- 开始一项工作时，在 `docs/STATUS.md` 的"进行中"写明负责人和分支，避免撞车。
-- 提交信息说明为什么改，用 `feat:`、`fix:`、`docs:`、`refactor:`、`test:`、`chore:` 开头。
+- `main` 始终可构建。功能在分支上开发，优先使用 Linear 生成的分支名；没有时用 `glo-123-short-title`。
+- 提交信息说明为什么改，用 `feat:`、`fix:`、`docs:`、`refactor:`、`test:`、`chore:` 开头，有 issue 时在末尾写 `GLO-123`。
 - 文档和代码放在同一个提交里。
 
 ## 代码风格

@@ -5,7 +5,7 @@ description: 添加新的翻译服务或文本能力时使用，例如接入 Dee
 
 # 添加 Action
 
-先读 `docs/CORE.md` 和 `docs/EXTENDING.md`。
+先读 `docs/CORE.md` 和 `docs/EXTENDING.md`。如果任务来自 Linear issue（团队 GLO），先读它。
 
 1. 确认不需要修改 core。如果觉得需要，先和用户讨论并写决策记录。
 2. 以 `providers/demo/` 为模板创建 `providers/<名称>/`。

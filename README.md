@@ -17,6 +17,7 @@ make run
 ## 文档
 
 - [项目现状](docs/STATUS.md)：从这里开始
+- [开发规划（Linear）](https://linear.app/yeman/team/GLO/overview)
 - [架构](docs/ARCHITECTURE.md)
 - [Core 是什么](docs/CORE.md)
 - [如何添加功能](docs/EXTENDING.md)

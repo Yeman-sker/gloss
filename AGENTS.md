@@ -6,9 +6,17 @@
 
 ## 开始工作前（按顺序）
 
-1. 读 [docs/STATUS.md](docs/STATUS.md)：现在做到哪、下一步是什么、有什么已知问题。
+1. 读 [docs/STATUS.md](docs/STATUS.md)：现在做到哪、有什么已知问题。
 2. 读 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)：分层和依赖方向。
-3. 只读与任务相关的文档，索引在 [docs/README.md](docs/README.md)。
+3. 如果任务来自某个 issue，到 [Linear](https://linear.app/yeman/team/GLO/overview) 读它；规划问题也以 Linear 为准。
+4. 只读与任务相关的文档，索引在 [docs/README.md](docs/README.md)。
+
+## 文档与规划
+
+- **`docs/` 记录事实：** 现状、决定、原因、实测数据和已发生的工作。
+- **[Linear（团队 GLO）](https://linear.app/yeman/team/GLO/overview) 管理规划：** 我们讨论计划后，在这里逐步打磨 issue 和开发安排。
+
+Issue 来自讨论。未经用户同意，不要创建 issue 或调整规划；发现新问题或新想法时先告诉用户，讨论后再进入 Linear。详见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#规划linear)。无法访问 Linear 时告诉用户，不要猜测规划内容。
 
 ## 目录
 
@@ -46,10 +54,11 @@ make run     # 构建并运行，默认快捷键 Option/Alt+Shift+D
 
 - `make check` 通过。界面改动已实际运行过；未运行的要明确说明。
 - 文档同步（见下表）。
+- 如果任务对应 Linear issue，其状态和验证结果已更新。
 
 | 发生了什么 | 更新哪里 |
 |---|---|
-| 进度、下一步或已知问题变化 | `docs/STATUS.md`（必须保持最新） |
+| 阶段、平台状态或已知问题变化 | `docs/STATUS.md`（必须保持最新） |
 | 一次工作结束 | `docs/journal/YYYY-MM.md` 追加一条 |
 | 做了难以反悔的决定 | `docs/decisions/` 新增记录 |
 | 分层或契约变化 | `docs/ARCHITECTURE.md`、`docs/CORE.md` |
