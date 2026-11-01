@@ -3,6 +3,7 @@
 package app
 
 import (
+	_ "embed"
 	"log"
 	"os"
 	"os/signal"
@@ -24,9 +25,16 @@ const (
 	escape   = "Escape"
 )
 
+// trayIcon is the ring of resources/icon.png, black on transparent so macOS
+// can tint it.
+//
+//go:embed tray.png
+var trayIcon []byte
+
 // shell ties the shortcut, the helper and the engine to the panel.
 type shell struct {
 	win    *mygo.Window
+	tray   *mygo.Tray
 	helper *capture.Helper
 	engine *core.Engine
 	panel  panel
@@ -46,7 +54,8 @@ func Run() error {
 	}
 	s := &shell{helper: helper, engine: engine, action: translate.ID()}
 
-	// The panel refuses to close, which holds App.Quit up: end directly.
+	// The panel refuses to close, which holds App.Quit up: signals and the
+	// tray end directly. The helper exits when its stdin closes with us.
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	go func() {
@@ -74,6 +83,18 @@ func Run() error {
 		})
 		if err := mygo.GlobalShortcut.Register(shortcut, s.trigger); err != nil {
 			log.Printf("shortcut %s: %v", shortcut, err)
+		}
+		s.tray, err = mygo.NewTray(mygo.TrayOptions{
+			ID:             "main",
+			Icon:           trayIcon,
+			IconIsTemplate: true,
+			ToolTip:        Name,
+			Menu: mygo.NewMenu([]*mygo.MenuItem{
+				{Label: "退出", Click: func(*mygo.MenuItem, *mygo.Window) { os.Exit(0) }},
+			}),
+		})
+		if err != nil {
+			log.Printf("tray: %v", err)
 		}
 		log.Printf("ready: %s", shortcut)
 	})
