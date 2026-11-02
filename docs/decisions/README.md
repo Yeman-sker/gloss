@@ -7,3 +7,4 @@
 | [0003](0003-capture-helper-process.md) | 取词放在独立的 Rust 进程 | 已接受 |
 | [0004](0004-docs-as-memory.md) | 文档即记忆 | 已接受 |
 | [0005](0005-docs-record-linear-plans.md) | 文档记录事实，Linear 管理规划 | 已接受 |
+| [0006](0006-bundled-fonts.md) | 打包字体，不用系统字体 | 已接受，已接入 `app/` |

@@ -108,3 +108,7 @@
 ## 升级 mygo
 
 mygo 还没到 1.0，API 可能变动。升级使用 `.agents/skills/mygo-maintenance`，并只修改 `app/`。
+
+## 字体
+
+`app/fonts/` 由 `scripts/subset_fonts.py <下载的字体目录> <输出目录>` 生成，选择依据见 [0006](decisions/0006-bundled-fonts.md)。

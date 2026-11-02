@@ -18,6 +18,7 @@ extern "C" {
     fn CGEventCreateKeyboardEvent(src: CFRef, key: u16, down: bool) -> CFRef;
     fn CGEventSetFlags(ev: CFRef, flags: u64);
     fn CGEventPost(tap: u32, ev: CFRef);
+    fn CGEventSourceButtonState(state: i32, button: u32) -> bool;
 }
 
 #[link(name = "CoreFoundation", kind = "framework")]
@@ -33,6 +34,10 @@ extern "C" {
 const UTF8: u32 = 0x0800_0100;
 const FLAG_CMD: u64 = 1 << 20;
 const KEY_C: u16 = 8;
+
+pub fn button_down() -> bool {
+    unsafe { CGEventSourceButtonState(0, 0) }
+}
 
 pub fn trusted() -> bool {
     unsafe { AXIsProcessTrusted() }

@@ -1,6 +1,10 @@
 //! Platforms without an implementation yet. Windows goes here next.
 pub const API: &str = "none";
 
+pub fn button_down() -> bool {
+    false
+}
+
 pub fn trusted() -> bool {
     false
 }

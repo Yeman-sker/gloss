@@ -82,3 +82,19 @@ func (h *Helper) Selection() (Result, error) {
 	err := json.Unmarshal(h.out.Bytes(), &r)
 	return r, err
 }
+
+// ButtonDown says whether the primary mouse button is down anywhere on the
+// desktop. It answers false rather than wait for a selection being read.
+func (h *Helper) ButtonDown() bool {
+	if !h.mu.TryLock() {
+		return false
+	}
+	defer h.mu.Unlock()
+	if _, err := fmt.Fprintln(h.in, "button"); err != nil {
+		return false
+	}
+	if !h.out.Scan() {
+		return false
+	}
+	return h.out.Text() == `{"down":true}`
+}

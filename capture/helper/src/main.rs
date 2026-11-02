@@ -3,6 +3,7 @@
 //!   check           {"trusted":bool}
 //!   selection       {"ok":..,"text":..,"method":..,"us":..}, platform API only
 //!   selection copy  the same, with a simulated copy as the fallback
+//!   button          {"down":..}, the primary mouse button anywhere on the desktop
 use std::io::{BufRead, Write};
 use std::time::Instant;
 
@@ -38,6 +39,7 @@ fn main() {
         let start = Instant::now();
         let reply = match line.trim() {
             "check" => format!("{{\"trusted\":{}}}", platform::trusted()),
+            "button" => format!("{{\"down\":{}}}", platform::button_down()),
             req @ ("selection" | "selection copy") => {
                 let (result, method) = match platform::read_selection() {
                     Ok(t) => (Ok(t), platform::API),
