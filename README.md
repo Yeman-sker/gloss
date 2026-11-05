@@ -6,7 +6,7 @@
 
 ## 快速开始
 
-需要 Go 1.27.3+ 和 Rust。目前只有 macOS 能取词，Windows 尚未实现。
+需要 Go 1.27.3+ 和 Rust。目前只支持 macOS，Windows 开发已暂停。
 
 先创建配置文件 `~/Library/Application Support/Gloss/config.json`（字段和其他平台路径见[开发约定](docs/DEVELOPMENT.md#翻译服务配置)）：
 
