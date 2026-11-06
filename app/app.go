@@ -34,8 +34,8 @@ const Name = "Gloss"
 
 const escape = "Escape"
 
-// trayIcon is the ring of resources/icon.png, black on transparent so macOS
-// can tint it.
+// trayIcon is the app icon's creature with the marker behind its ear, black on
+// transparent so macOS can tint it. Source: design/icon/gloss-tray-icon.svg.
 //
 //go:embed tray.png
 var trayIcon []byte

@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" width="36" height="36">
+  <!-- 菜单栏模板图：App 图标（gloss-app-icon.svg）里的墨色小怪物和耳后的荧光笔，几何取自同一条路径。
+       只有黑色和透明，macOS 按菜单栏明暗着色。18pt 高，2 倍屏下 36 像素。
+       省掉了瞳孔、嘴和笔帽：1 倍屏上它们会糊成一团。导出：make icons -->
+  <defs>
+    <path id="body" d="M292,352 C412,316 612,312 724,342 C812,366 838,452 828,532 C818,614 768,662 686,670 L480,676 L384,758 L400,672 C318,666 244,630 232,540 C220,446 234,368 292,352 Z"/>
+    <!-- 笔在头后面：身体外扩一圈，从笔上挖掉，留出 2 像素的缝。 -->
+    <mask id="behind" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <rect width="1024" height="1024" fill="#fff"/>
+      <use href="#body" fill="#000" stroke="#000" stroke-width="84" stroke-linejoin="round"/>
+    </mask>
+    <mask id="eyes" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <rect width="1024" height="1024" fill="#fff"/>
+      <ellipse cx="432" cy="486" rx="74" ry="92" fill="#000" transform="rotate(-6 432 486)"/>
+      <ellipse cx="596" cy="476" rx="66" ry="82" fill="#000" transform="rotate(-4 596 476)"/>
+    </mask>
+  </defs>
+  <g transform="scale(0.05) translate(-166 -105) rotate(-8 520 520)" fill="#000">
+    <g mask="url(#behind)">
+      <rect x="610" y="248" width="280" height="92" rx="24" transform="rotate(-26 680 300)"/>
+    </g>
+    <use href="#body" stroke="#000" stroke-width="10" stroke-linejoin="round" mask="url(#eyes)"/>
+  </g>
+</svg>
