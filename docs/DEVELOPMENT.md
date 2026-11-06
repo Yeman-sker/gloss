@@ -14,12 +14,19 @@
 | `make test` | Go 和 Rust 测试 |
 | `make build` | 构建到 `bin/` |
 | `make run` | 构建并运行 |
+| `make app` | 打包 `build/darwin-arm64/gloss.app`，helper 放进 `Contents/Resources`。“登录时启动”需要从 .app 运行 |
+| `go run . stats [天数]` | 记忆里的路由统计（改正率、已确认准确率、未知比例、回退率、耗时） |
+| `go run . recent [条数]`、`go run . label <会话> right\|wrong` | 查看最近的会话（不含文本），给会话标注对错 |
+| `go run ./cmd/smoke` | 用配置里的真实服务测各功能的首字和总耗时，以及错误 Key、连不上时的提示 |
+| `go run ./cmd/routebench` | 用固定样例比较规则和 Jev，测 Jev 延迟（需要 Jev 的 Key） |
 
-结束程序：点托盘图标选"退出"，或在终端按 Ctrl+C。
+结束程序：点托盘图标选“退出”，或在终端按 Ctrl+C。
 
-## 翻译服务配置
+调试面板卡顿：`GLOSS_FRAMELOG=1 ./bin/gloss`，动画期间超过 25ms 的帧间隔会写进日志。
 
-手动编辑用户配置目录下的 `Gloss/config.json`，不要放进仓库。每次翻译都会重新读取，改完不用重启。
+## 配置
+
+手动编辑用户配置目录下的 `Gloss/config.json`，不要放进仓库。托盘 › 打开配置文件会在文件不存在时生成模板。改完不用重启：程序每 2 秒检查一次，功能每次运行时读取最新的服务配置。设计见[决策 0008](decisions/0008-two-layer-settings.md)。
 
 | 平台 | 路径 |
 |---|---|
@@ -29,21 +36,38 @@
 
 ```json
 {
-  "api_key": "你的Key",
-  "base_url": "https://api.openai.com/v1",
-  "model": "模型名称",
-  "target_lang": "zh-Hans"
+  "services": {
+    "main": {"base_url": "https://api.openai.com/v1", "api_key": "你的Key", "model": "模型名称"},
+    "jev": {"base_url": "https://api.typesafe.ai/v1", "api_key": "Jev的Key", "model": "jev-latest"}
+  },
+  "default_service": "main",
+  "target_lang": "zh-Hans",
+  "shortcut": "Alt+Shift+D",
+  "launch_at_login": false,
+  "memory": {"enabled": true, "retention_days": 90, "max_records": 5000},
+  "routing": {"enabled": true, "jev_service": "jev", "wait_ms": 800, "min_confidence": 0.6, "send_window_title": false},
+  "actions": ["translate", "explain", "prompt", "agent"],
+  "action_settings": {
+    "translate": {"target_lang": "en"},
+    "explain": {"depth": "详细", "model": "另一个模型"},
+    "agent": {"service": "main"}
+  }
 }
 ```
 
 | 字段 | 说明 |
 |---|---|
-| `api_key` | 必填，缺少时面板会提示 |
-| `model` | 必填，缺少时面板会提示。不内置默认值，模型会下线，各家名称也不同 |
-| `base_url` | 可选，默认 `https://api.openai.com/v1`。写到版本号为止，程序会追加 `/chat/completions` |
-| `target_lang` | 可选，默认 `zh-Hans` |
+| `services` | 模型服务。`api_key` 和 `model` 必填，缺少时面板会说明是哪个服务缺什么。`base_url` 写到版本号为止，默认 `https://api.openai.com/v1`。不内置默认模型 |
+| `default_service` | 功能没指定服务时用哪个。只有一个服务时可以省略 |
+| `shortcut` | 全局快捷键，默认 `Alt+Shift+D` |
+| `memory` | 是否记录使用、保留天数、最多条数。托盘可以关闭和清空 |
+| `routing` | 是否自动选择功能；`jev_service` 为空时只用规则和记忆；`wait_ms` 是等 Jev 的上限；`min_confidence` 是采用 Jev 结果的最低把握；`send_window_title` 是否把窗口标题发给 Jev |
+| `actions` | 启用哪些功能及顺序，第一个是默认功能 |
+| `action_settings.<ID>` | 该功能声明的设置项，以及 `service`、`model`。不能在这里写 Key |
 
-文件里是明文 Key，macOS 和 Linux 上建议 `chmod 600`。
+旧格式（顶层的 `api_key`、`base_url`、`model`、`target_lang`）仍然可用，会当作名为 `main` 的服务。
+
+拼错字段名、类型不对、值不在选项里都会报错，错误信息写明行列和字段，但不会引用值。文件是明文 Key，程序读取时会把权限设为 600。
 
 ## 规划（Linear）
 

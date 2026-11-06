@@ -1,6 +1,6 @@
 # Core 是什么
 
-Core 是产品的本体，也就是**不依赖任何窗口和平台**、脱离界面也能完整测试的部分。代码全部在 `core/core.go`，只依赖标准库。
+Core 是产品的本体，也就是**不依赖任何窗口和平台**、脱离界面也能完整测试的部分。代码在 `core/core.go` 和 `core/describe.go`，只依赖标准库。
 
 ## 只做四件事
 
@@ -27,11 +27,32 @@ type Emit func(index int, kind BlockKind, delta string)
 
 | 概念 | 说明 |
 |---|---|
-| `Request` | 文本加 `Context`（来源应用、上下文、语言）。解释句子和热梗需要上下文，所以一开始就带上 |
+| `Request` | 文本、`Context` 和 `Settings`（宿主按功能声明校验过的设置值） |
+| `Context` | `SourceApp`（bundle id）、`Surrounding`（选区连同前后各约 300 字，有上限）、`TargetLang`、`WindowTitle`（只给路由，不发给模型）、`Editable`（三态：yes、no、unknown） |
 | `Block` | 结果的一段，由 `index` 标识，`delta` 追加文本 |
-| `BlockKind` | 语义类型：`text`、`phonetic`、`definition`、`example`、`tag`。只表达含义，不表达外观 |
-| `Engine` | 同一时间只运行一个 Action |
+| `BlockKind` | 语义类型：`text`、`markdown`、`phonetic`、`definition`、`example`、`tag`。只表达含义，不表达外观 |
+| `Engine` | 同一时间只运行一个 Action；`Descriptors()` 列出所有功能的描述 |
 | `Event` | Engine 发给界面的 `Delta`、`Done` 或 `Error`，带有 run 编号 |
+
+## 描述（可选）
+
+Action 可以再实现 `Describer`，返回 `Descriptor`，见[决策 0007](decisions/0007-action-descriptor.md)：
+
+| 字段 | 说明 |
+|---|---|
+| `ID`、`Name` | 稳定的用途名（`translate`）和界面上的名字 |
+| `Purpose` | 一句用途描述，路由用它 |
+| `Output` | 主结果（index 0）的类型，`text` 或 `markdown`，整个执行中不变 |
+| `Replaceable` | 结果适合替换原文。能否安全写回由宿主在运行时判断 |
+| `Settings` | 设置项：键、类型（`text`、`bool`、`choice`、`number`）、默认值、选项、说明 |
+
+没实现 `Describer` 的 Action 由 `core.Describe` 补上默认值：输出 `text`，不可替换，没有设置。
+
+## 完成语义
+
+- `EventDone`：结果完整，可以复制或替换原文。
+- `EventError`：不能当成完整结果，哪怕之前已经输出了一部分。
+- 面板的动画什么时候结束是 `app/` 的事，与这两个事件无关。
 
 ## Action 必须遵守
 

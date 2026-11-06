@@ -13,16 +13,23 @@ import (
 // Context is what surrounds the text. Sentences and memes need it to be
 // explained well, so it travels with every request from the start.
 type Context struct {
-	SourceApp   string
-	Surrounding string
+	SourceApp   string // a stable identity, the bundle id on macOS
+	Surrounding string // bounded text around the selection; empty when unknown
 	SourceLang  string // empty means detect
 	TargetLang  string
+	// WindowTitle is for routing only: hosts do not pass it to actions'
+	// models unless the user allows it.
+	WindowTitle string
+	Editable    Editable
 }
 
 // Request is one thing the user asked about.
 type Request struct {
 	Text    string
 	Context Context
+	// Settings are the action's own settings, checked and defaulted by the
+	// host, keyed by Setting.Key. An action sees no other action's.
+	Settings map[string]string
 }
 
 // BlockKind says what a block means. Actions give meaning, app gives looks.
@@ -47,7 +54,10 @@ type Action interface {
 	Run(ctx context.Context, req Request, emit Emit) error
 }
 
-// EventType tells a Sink what happened to a run.
+// EventType tells a Sink what happened to a run. EventDone means the result
+// is complete and may be copied or written back; a run that ends in
+// EventError has no complete result, whatever it emitted before. Neither
+// says anything about the panel's animation, which finishes on its own.
 type EventType int
 
 const (
@@ -105,6 +115,16 @@ func (e *Engine) Actions() []Action {
 	out := make([]Action, len(e.order))
 	for i, id := range e.order {
 		out[i] = e.actions[id]
+	}
+	return out
+}
+
+// Descriptors describes the registered actions in the order they were added.
+func (e *Engine) Descriptors() []Descriptor {
+	actions := e.Actions()
+	out := make([]Descriptor, len(actions))
+	for i, a := range actions {
+		out[i] = Describe(a)
 	}
 	return out
 }

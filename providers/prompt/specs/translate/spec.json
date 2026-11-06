@@ -1,0 +1,11 @@
+{
+  "id": "translate",
+  "name": "翻译",
+  "purpose": "把外语文字翻译成用户的语言：用户读不懂或想确认一段外文的意思，要的是译文本身。",
+  "output": "text",
+  "replaceable": false,
+  "order": 1,
+  "settings": [
+    {"key": "target_lang", "type": "text", "default": "", "help": "译成哪种语言，留空时用产品设置的默认目标语言"}
+  ]
+}

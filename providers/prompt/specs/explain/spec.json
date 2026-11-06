@@ -1,0 +1,12 @@
+{
+  "id": "explain",
+  "name": "释义",
+  "purpose": "用通俗的话解释一个名词、术语、梗或一句话在当前上下文里是什么意思：用户看得懂字面，但不明白它指什么。",
+  "output": "markdown",
+  "replaceable": false,
+  "order": 2,
+  "settings": [
+    {"key": "depth", "type": "choice", "default": "简短", "options": ["简短", "详细"], "help": "解释的篇幅"},
+    {"key": "style", "type": "choice", "default": "类比", "options": ["类比", "直白"], "help": "多用类比和例子，还是直接说清楚"}
+  ]
+}

@@ -3,28 +3,35 @@
 package app
 
 import (
+	"context"
 	_ "embed"
+	"errors"
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
+	"unicode"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
 	"gloss/capture"
 	"gloss/core"
+	"gloss/memory"
+	"gloss/providers/openai"
+	"gloss/providers/prompt"
+	"gloss/routing"
+	"gloss/settings"
 )
 
 // Name is the working name of the product: change it here and in mygo.json.
 const Name = "Gloss"
 
-const (
-	shortcut = "Alt+Shift+D"
-	escape   = "Escape"
-)
+const escape = "Escape"
 
 // trayIcon is the ring of resources/icon.png, black on transparent so macOS
 // can tint it.
@@ -39,7 +46,33 @@ type shell struct {
 	helper *capture.Helper
 	engine *core.Engine
 	panel  panel
-	action string
+
+	// The features, in their order, and how each is described.
+	descs []core.Descriptor
+
+	// The config, read again when its file changes. cfgErr says why it
+	// cannot be used as it is; the features report it when they run.
+	cfgMu    sync.Mutex
+	cfgPath  string
+	cfg      *settings.Config
+	cfgErr   error
+	cfgStamp time.Time
+	shortcut string
+
+	store     *memory.Store
+	lastWrite time.Duration
+
+	// sess is the selection showing, and captureGen the shortcut's latest
+	// press: a capture that comes back after another press shows nothing.
+	sess        *session
+	captureGen  uint64
+	routeCancel context.CancelFunc
+
+	autoItem, memItem, loginItem *mygo.MenuItem
+
+	frameLog     bool
+	lastPaint    time.Time
+	wasAnimating bool
 
 	area       mygo.Rectangle
 	x, y       spring
@@ -58,16 +91,30 @@ func Run() error {
 	if err := registerFonts(); err != nil {
 		return err
 	}
-	engine := core.NewEngine()
-	translate := translator{}
-	if err := engine.Register(translate); err != nil {
-		return err
-	}
-	helper, err := capture.Start(capture.Path())
+	s := &shell{engine: core.NewEngine(), frameLog: os.Getenv("GLOSS_FRAMELOG") != ""}
+	specs, err := prompt.Builtin()
 	if err != nil {
 		return err
 	}
-	s := &shell{helper: helper, engine: engine, action: translate.ID()}
+	for _, spec := range specs {
+		if err := s.engine.Register(prompt.Action{Spec: spec, Chat: s.chat}); err != nil {
+			return err
+		}
+		s.descs = append(s.descs, spec.Descriptor)
+	}
+	if s.cfgPath, err = settings.Path(Name); err != nil {
+		return err
+	}
+	s.loadConfig()
+	cfg := s.config()
+	s.store, err = memory.Open(filepath.Join(filepath.Dir(s.cfgPath), "memory"),
+		memory.Options{RetentionDays: cfg.Memory.RetentionDays, MaxRecords: cfg.Memory.MaxRecords}, cfg.Memory.Enabled)
+	if err != nil {
+		log.Printf("memory: %v", err)
+	}
+	if s.helper, err = capture.Start(capture.Path()); err != nil {
+		return err
+	}
 	s.panel.frame = s.frame
 	s.panel.closed = s.closed
 	s.panel.local = func() (float32, float32) {
@@ -79,8 +126,15 @@ func Run() error {
 		p := mygo.Screen.CursorScreenPoint()
 		return p.X, p.Y
 	}
-	s.panel.copied = func(c *ui.Context, text string) { c.WriteClipboard(text) }
-	s.panel.retry = func() { s.start(s.panel.source) }
+	s.panel.copied = func(c *ui.Context, text string) {
+		c.WriteClipboard(text)
+		if s.sess != nil {
+			s.sess.copied = true
+		}
+	}
+	s.panel.retry = s.retry
+	s.panel.switchTo = s.switchTo
+	s.panel.replace = s.replace
 
 	// The panel refuses to close, which holds App.Quit up: signals and the
 	// tray end directly. The helper exits when its stdin closes with us.
@@ -88,6 +142,7 @@ func Run() error {
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-stop
+		s.endSession()
 		os.Exit(0)
 	}()
 
@@ -109,68 +164,440 @@ func Run() error {
 			e.PreventDefault()
 			s.hide()
 		})
-		if err := mygo.GlobalShortcut.Register(shortcut, s.trigger); err != nil {
-			log.Printf("shortcut %s: %v", shortcut, err)
-		}
-		s.tray, err = mygo.NewTray(mygo.TrayOptions{
-			ID:             "main",
-			Icon:           trayIcon,
-			IconIsTemplate: true,
-			ToolTip:        Name,
-			Menu: mygo.NewMenu([]*mygo.MenuItem{
-				{Label: "退出", Click: func(*mygo.MenuItem, *mygo.Window) { os.Exit(0) }},
-			}),
-		})
-		if err != nil {
-			log.Printf("tray: %v", err)
-		}
-		log.Printf("ready: %s", shortcut)
+		s.registerShortcut(cfg.Shortcut)
+		s.makeTray()
+		go s.watchConfig()
+		log.Printf("ready: %s", s.shortcut)
 	})
 	return mygo.App.Run()
 }
 
-// trigger reads the selection and starts the action on it. The same
-// selection again closes the panel.
+func (s *shell) registerShortcut(key string) {
+	if key == s.shortcut {
+		return
+	}
+	if s.shortcut != "" {
+		mygo.GlobalShortcut.Unregister(s.shortcut)
+	}
+	if err := mygo.GlobalShortcut.Register(key, s.trigger); err != nil {
+		log.Printf("shortcut %s: %v", key, err)
+		if s.shortcut != "" && s.shortcut != key {
+			// Keep the one that worked.
+			if mygo.GlobalShortcut.Register(s.shortcut, s.trigger) == nil {
+				return
+			}
+		}
+		s.shortcut = ""
+		return
+	}
+	s.shortcut = key
+}
+
+func (s *shell) makeTray() {
+	cfg := s.config()
+	s.autoItem = &mygo.MenuItem{Label: "自动选择功能", Type: mygo.MenuItemCheckbox, Checked: cfg.Routing.Enabled,
+		Click: func(it *mygo.MenuItem, _ *mygo.Window) { s.setOption(it.Checked, "routing", "enabled") }}
+	s.memItem = &mygo.MenuItem{Label: "记忆使用习惯", Type: mygo.MenuItemCheckbox, Checked: cfg.Memory.Enabled,
+		Click: func(it *mygo.MenuItem, _ *mygo.Window) { s.setOption(it.Checked, "memory", "enabled") }}
+	s.loginItem = &mygo.MenuItem{Label: "登录时启动", Type: mygo.MenuItemCheckbox, Checked: cfg.LaunchAtLogin,
+		Click: func(it *mygo.MenuItem, _ *mygo.Window) { s.setOption(it.Checked, "launch_at_login") }}
+	var err error
+	s.tray, err = mygo.NewTray(mygo.TrayOptions{
+		ID:             "main",
+		Icon:           trayIcon,
+		IconIsTemplate: true,
+		ToolTip:        Name,
+		Menu: mygo.NewMenu([]*mygo.MenuItem{
+			s.autoItem,
+			s.memItem,
+			{Label: "清空记忆", Click: func(*mygo.MenuItem, *mygo.Window) { s.clearMemory() }},
+			{Type: mygo.MenuItemSeparator},
+			s.loginItem,
+			{Label: "打开配置文件", Click: func(*mygo.MenuItem, *mygo.Window) { s.openConfig() }},
+			{Type: mygo.MenuItemSeparator},
+			{Label: "退出", Click: func(*mygo.MenuItem, *mygo.Window) {
+				s.endSession()
+				os.Exit(0)
+			}},
+		}),
+	})
+	if err != nil {
+		log.Printf("tray: %v", err)
+	}
+}
+
+// trigger reads the selection away from the main thread and starts on it.
 func (s *shell) trigger() {
-	r, err := s.helper.Selection()
+	s.captureGen++
+	gen := s.captureGen
+	start := time.Now()
+	go func() {
+		r, err := s.helper.Selection()
+		took := time.Since(start)
+		mygo.RunOnMain(func() {
+			if gen == s.captureGen {
+				s.captured(r, err, took)
+			} else if err == nil && r.Token != 0 {
+				go s.helper.Forget(r.Token)
+			}
+		})
+	}()
+}
+
+// captured starts on what the helper read. The same selection again closes
+// the panel.
+func (s *shell) captured(r capture.Result, err error, took time.Duration) {
 	text := strings.TrimSpace(r.Text)
-	if err != nil || !r.OK || text == "" {
-		s.engine.Cancel()
-		if s.open() && s.panel.notice == "" {
+	if err == nil && text == "" {
+		err = capture.ErrNoSelection
+	}
+	if err != nil {
+		log.Printf("capture: %v", err)
+		if s.open() && s.panel.notice == "" && errors.Is(err, capture.ErrNoSelection) {
 			s.hide()
 			return
 		}
-		s.showNotice("先选中一段文字")
+		s.endSession()
+		s.engine.Cancel()
+		s.showNotice(captureNotice(err))
 		return
 	}
 	if s.open() && s.panel.notice == "" && text == s.panel.source {
 		s.hide()
 		return
 	}
-	s.start(text)
+	cfg := s.config()
+	src := newSource(r, took.Milliseconds(), cfg.TargetLang)
+	log.Printf("capture: %s in %dms, app %s, editable %s, %s", r.Method, took.Milliseconds(), or(r.App, "unknown"), src.ctx.Editable, src.shape.Class())
+	s.begin(src)
 }
 
-// start shows text in the panel and runs the action on it.
-func (s *shell) start(text string) {
-	s.present(func() { s.panel.reset(text) })
-	if _, err := s.engine.Start(s.action, core.Request{Text: text}, func(ev core.Event) {
-		s.win.Update(func() { s.panel.apply(ev) })
-	}); err != nil {
+func or(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
+}
+
+// captureNotice says what went wrong with reading the selection, and what
+// to do about it.
+func captureNotice(err error) string {
+	switch {
+	case errors.Is(err, capture.ErrPermission):
+		return "需要辅助功能权限：系统设置 › 隐私与安全性 › 辅助功能"
+	case errors.Is(err, capture.ErrTimeout):
+		return "取词超时，已重启取词程序，请再试一次"
+	case errors.Is(err, capture.ErrExited):
+		return "取词程序意外退出，已重启，请再试一次"
+	case errors.Is(err, capture.ErrProtocol):
+		return "取词程序返回了无法识别的结果，已重启"
+	}
+	return "先选中一段文字"
+}
+
+// candidates are the features that are on, in the config's order: the
+// first is the default.
+func (s *shell) candidates(cfg *settings.Config) []core.Descriptor {
+	return ordered(s.descs, cfg.Actions)
+}
+
+func ordered(descs []core.Descriptor, ids []string) []core.Descriptor {
+	var out []core.Descriptor
+	for _, id := range ids {
+		for _, d := range descs {
+			if d.ID == id {
+				out = append(out, d)
+				break
+			}
+		}
+	}
+	if len(out) == 0 && len(descs) > 0 {
+		out = descs[:1]
+	}
+	return out
+}
+
+func (s *shell) descriptor(id string) (core.Descriptor, bool) {
+	for _, d := range s.descs {
+		if d.ID == id {
+			return d, true
+		}
+	}
+	return core.Descriptor{}, false
+}
+
+// begin opens a session on a selection: the panel shows it at once, and
+// the feature starts once routing has picked it.
+func (s *shell) begin(src source) {
+	s.endSession()
+	cfg := s.config()
+	cands := s.candidates(cfg)
+	now := time.Now()
+	sess := &session{id: newSessionID(), start: now, src: src}
+	var features []feature
+	for _, d := range cands {
+		sess.candidates = append(sess.candidates, d.ID)
+		features = append(features, feature{d.ID, d.Name})
+	}
+	s.sess = sess
+	s.present(func() {
+		s.panel.reset(src.text)
+		s.panel.features = features
+		s.panel.copyText = func() string {
+			if sess.done {
+				return sess.result.String()
+			}
+			return ""
+		}
+	})
+	def := cands[0].ID
+	if !cfg.Routing.Enabled || len(cands) == 1 {
+		why := "自动选择已关闭"
+		if len(cands) == 1 {
+			why = "只有一个可用功能"
+		}
+		sess.decide(def, memory.ByDefault, why, nil, 0)
+		s.run(sess, def, memory.ByDefault, why)
+		return
+	}
+	sess.routing = true
+	ctx, cancel := context.WithCancel(context.Background())
+	s.routeCancel = cancel
+	router := routing.Router{
+		Wait:            time.Duration(cfg.Routing.WaitMillis) * time.Millisecond,
+		MinConfidence:   cfg.Routing.MinConfidence,
+		PreferenceShare: 0.6,
+	}
+	if svc, ok := cfg.Jev(); ok {
+		router.Judge = routing.Jev{BaseURL: svc.BaseURL, APIKey: svc.APIKey, Model: svc.Model, SendTitle: cfg.Routing.SendWindowTitle}
+	}
+	var enabled []string
+	for _, d := range cands {
+		enabled = append(enabled, d.ID)
+	}
+	store := s.store
+	go func() {
+		var prefs memory.Snapshot
+		if store != nil && store.Enabled() {
+			prefs = memory.Prefer(store.Records(), memory.Situation{App: src.ctx.SourceApp, Editable: src.ctx.Editable.String(), Shape: src.shape}, enabled, time.Now())
+		}
+		d := router.Route(ctx, routing.Input{
+			Text: src.text, Shape: src.shape, App: src.ctx.SourceApp, Title: src.title,
+			Editable: src.ctx.Editable, TargetLang: src.ctx.TargetLang,
+			Candidates: cands, Default: def, Prefs: prefs,
+		})
+		if d.JevError != "" {
+			log.Printf("route: Jev not used: %s", d.JevError)
+		}
+		mygo.RunOnMain(func() {
+			if s.sess != sess || !sess.decide(d.ID, d.By, d.Reason, d.Scores, d.Elapsed) {
+				return
+			}
+			log.Printf("route: %s by %s in %v", d.ID, d.By, d.Elapsed.Round(time.Microsecond))
+			s.run(sess, d.ID, d.By, d.Reason)
+		})
+	}()
+}
+
+// run starts a feature on the session's selection. Only its events show:
+// the panel drops those of runs it replaced.
+func (s *shell) run(sess *session, id, by, why string) {
+	d, ok := s.descriptor(id)
+	if !ok || sess.closed {
+		return
+	}
+	cfg := s.config()
+	req := core.Request{Text: sess.src.text, Context: sess.src.ctx, Settings: cfg.Values(d)}
+	runID, err := s.engine.Start(id, req, func(ev core.Event) {
+		s.win.Update(func() {
+			if s.sess != sess || !sess.accepts(ev.Run) {
+				return
+			}
+			sess.observe(ev, time.Now())
+			s.panel.apply(ev)
+		})
+	})
+	if err != nil {
 		log.Print(err)
+		return
+	}
+	sess.begin(id, by, runID, time.Now())
+	replaceable := d.Replaceable && !sess.replaced && sess.src.token != 0 && sess.src.ctx.Editable == core.EditableYes
+	s.panel.beginRun(runID, feature{d.ID, d.Name}, by, why, d.Output, replaceable)
+	s.win.Invalidate()
+}
+
+// switchTo runs another feature on the same selection: the user's
+// correction, which routing will not override.
+func (s *shell) switchTo(id string) {
+	sess := s.sess
+	if sess == nil || !sess.choose(id, time.Now()) {
+		return
+	}
+	if s.routeCancel != nil {
+		s.routeCancel()
+	}
+	s.run(sess, id, memory.ByManual, "你选择了它")
+}
+
+// retry runs the feature showing again, on the same selection.
+func (s *shell) retry() {
+	sess := s.sess
+	if sess == nil || sess.feature == "" {
+		return
+	}
+	s.run(sess, sess.feature, sess.by, s.panel.why)
+}
+
+// replace writes the result back where the selection was, if it is still
+// there as it was. The helper checks; this only asks.
+func (s *shell) replace() {
+	sess := s.sess
+	if sess == nil || !sess.done || sess.replaced || !s.panel.replaceable {
+		return
+	}
+	result := strings.TrimSpace(sess.result.String())
+	if result == "" {
+		return
+	}
+	// Keep the whitespace the selection had around it.
+	raw := sess.src.raw
+	lead := raw[:len(raw)-len(strings.TrimLeftFunc(raw, unicode.IsSpace))]
+	trail := raw[len(strings.TrimRightFunc(raw, unicode.IsSpace)):]
+	text := lead + result + trail
+	token := sess.src.token
+	run := sess.run
+	// The reply counts only for the run that asked: a switch to another
+	// feature in the meantime makes it stale.
+	current := func() bool { return s.sess == sess && sess.accepts(run) }
+	s.panel.setStatus("正在替换…", colorHint)
+	s.win.Invalidate()
+	go func() {
+		r, err := s.helper.Replace(token, text)
+		mygo.RunOnMain(func() {
+			// The request went out and no answer came: the text may have
+			// been written. Treated as written, never offered again.
+			unknown := errors.Is(err, capture.ErrTimeout) || errors.Is(err, capture.ErrExited)
+			if err == nil || unknown {
+				// The helper wrote, whatever shows now: never offer it again.
+				sess.replaced = true
+			}
+			// What was written holds for the session, whichever feature
+			// shows now: the button goes, and an unknown result is told.
+			if s.sess == sess && !sess.closed && (sess.replaced || current()) {
+				if sess.replaced {
+					s.panel.replaceable = false
+				}
+				if unknown {
+					log.Printf("replace: %v", err)
+					s.panel.setStatus("取词程序没有回应，替换结果未知，请检查原文", colorDanger)
+					s.win.Invalidate()
+					return
+				}
+			}
+			if !current() {
+				s.win.Invalidate()
+				return
+			}
+			if err != nil {
+				log.Printf("replace: %v", err)
+				s.panel.setStatus(replaceFailure(err), colorDanger)
+				s.win.Invalidate()
+				return
+			}
+			log.Printf("replace: %s, verified %v, %dµs", r.Method, r.Verified, r.Micros)
+			if !r.Verified {
+				s.panel.setStatus("已写入，但没能确认结果，请检查原文", colorDanger)
+				s.win.Invalidate()
+				return
+			}
+			s.panel.setStatus("已替换", colorSuccess)
+			s.win.Invalidate()
+			time.AfterFunc(700*time.Millisecond, func() {
+				mygo.RunOnMain(func() {
+					if current() && !s.panel.pinned {
+						s.hide()
+					}
+				})
+			})
+		})
+	}()
+}
+
+func replaceFailure(err error) string {
+	switch {
+	case errors.Is(err, capture.ErrChanged):
+		return "原文或选区已变化，没有替换"
+	case errors.Is(err, capture.ErrNotEditable):
+		return "这里不能编辑，没有替换"
+	case errors.Is(err, capture.ErrExpired):
+		return "选区已失效，没有替换"
+	case errors.Is(err, capture.ErrUnverified):
+		return "读不到原选区，没有替换"
+	case errors.Is(err, capture.ErrPermission):
+		return "需要辅助功能权限才能替换"
+	}
+	return "替换失败"
+}
+
+// endSession closes the session showing and keeps what memory may keep of
+// it: never its text.
+func (s *shell) endSession() {
+	sess := s.sess
+	if sess == nil || sess.closed {
+		return
+	}
+	if s.routeCancel != nil {
+		s.routeCancel()
+		s.routeCancel = nil
+	}
+	rec := sess.record(time.Now())
+	sess.closed = true
+	if sess.src.token != 0 {
+		go s.helper.Forget(sess.src.token)
+	}
+	store := s.store
+	if store == nil || !store.Enabled() || rec.Final == "" {
+		return
+	}
+	rec.Timings.WriteMs = s.lastWrite.Milliseconds()
+	took, err := store.Add(rec)
+	s.lastWrite = took
+	if err != nil {
+		log.Printf("memory: %v", err)
 	}
 }
 
-func (s *shell) showNotice(text string) {
-	s.present(func() { s.panel.showNotice(text) })
-	gen := s.panel.gen
-	stamp := s.panel.noticeAt
-	time.AfterFunc(noticeFor, func() {
-		s.win.Update(func() {
-			if s.panel.gen == gen && s.panel.noticeAt.Equal(stamp) && s.panel.notice != "" {
-				s.hide()
-			}
-		})
-	})
+func (s *shell) clearMemory() {
+	if s.store == nil {
+		return
+	}
+	if err := s.store.Clear(); err != nil {
+		log.Printf("memory: %v", err)
+		s.showNotice("清空记忆失败")
+		return
+	}
+	s.showNotice("已清空记忆")
+}
+
+// chat is how every feature reaches its model: the service the config
+// names for it, read at the moment it runs.
+func (s *shell) chat(ctx context.Context, actionID string, msgs []prompt.Message, delta func(string)) error {
+	s.cfgMu.Lock()
+	cfg, cfgErr := s.cfg, s.cfgErr
+	s.cfgMu.Unlock()
+	if cfgErr != nil {
+		return cfgErr
+	}
+	svc, err := cfg.Service(actionID)
+	if err != nil {
+		return err
+	}
+	out := make([]openai.Message, len(msgs))
+	for i, m := range msgs {
+		out[i] = openai.Message{Role: m.Role, Content: m.Content}
+	}
+	return openai.Client{BaseURL: svc.BaseURL, APIKey: svc.APIKey, Model: svc.Model}.Stream(ctx, out, delta)
 }
 
 // present puts new content in the panel: it glides there when it is open,
@@ -181,6 +608,7 @@ func (s *shell) present(content func()) {
 	p := mygo.Screen.CursorScreenPoint()
 	s.area = mygo.Screen.DisplayNearestPoint(p).WorkArea
 	s.panel.maxHeight = float32(s.area.Height) * 0.6
+	s.panel.maxReading = float32(s.area.Height) * 0.75
 	wantW, wantH := widthCapsule, heightCapsule
 	if wasOpen && s.panel.pinned {
 		s.win.Invalidate()
@@ -245,7 +673,10 @@ func (s *shell) hide() {
 		return
 	}
 	mygo.GlobalShortcut.Unregister(escape)
+	// A capture still on its way shows nothing once the panel is closed.
+	s.captureGen++
 	s.engine.Cancel()
+	s.endSession()
 	s.panel.closing = true
 	s.win.Invalidate()
 	gen := s.panel.gen
@@ -362,6 +793,16 @@ type outsidePress struct {
 // moves where the surface should be, and is dragged by the surface.
 func (s *shell) frame(c *ui.Context, curW, curH, wantW, wantH float32, pressed, overText bool) {
 	s.curW, s.curH = curW, curH
+	if s.frameLog {
+		// Only gaps after a frame that asked for the next one count.
+		now := time.Now()
+		// panel.animating is still the last frame's here.
+		if gap := now.Sub(s.lastPaint); (s.panel.animating || s.wasAnimating) && gap > 25*time.Millisecond && gap < time.Second {
+			log.Printf("frame: gap %v, pressed %v, dragging %v, glide %v", gap.Round(time.Millisecond), pressed, s.drag.active, s.x.moving() || s.y.moving())
+		}
+		s.lastPaint = now
+		s.wasAnimating = pressed || s.drag.active || s.x.moving() || s.y.moving()
+	}
 	// A window that resizes every frame drops frames: it grows at once, to
 	// where the surface is heading, and shrinks once the surface is there.
 	if w, h := int(wantW+0.999)+2*margin, int(wantH+0.999)+2*margin; w > s.winW || h > s.winH || (abs32(curW-wantW) < 0.5 && abs32(curH-wantH) < 0.5) {
@@ -457,4 +898,17 @@ func abs32(v float32) float32 {
 		return -v
 	}
 	return v
+}
+
+func (s *shell) showNotice(text string) {
+	s.present(func() { s.panel.showNotice(text) })
+	gen := s.panel.gen
+	stamp := s.panel.noticeAt
+	time.AfterFunc(noticeFor, func() {
+		s.win.Update(func() {
+			if s.panel.gen == gen && s.panel.noticeAt.Equal(stamp) && s.panel.notice != "" {
+				s.hide()
+			}
+		})
+	})
 }

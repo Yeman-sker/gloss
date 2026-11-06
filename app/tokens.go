@@ -20,16 +20,22 @@ const (
 
 	widthMinPanel float32 = 240
 	widthPanel    float32 = 420
-	widthError    float32 = 280
-	widthCapsule  float32 = 300
-	minCapsule    float32 = 112
-	heightCapsule float32 = 48
-	radiusCapsule float32 = 24
-	radiusPanel   float32 = 18
-	radiusControl float32 = 8
-	paddingY      float32 = 14
-	paddingX      float32 = 16
-	gapGroup      float32 = 8
+	// widthReading is the reading layout's, for long and structured results.
+	widthReading   float32 = 520
+	widthMinFooter float32 = 340
+	heightFooter   float32 = 36
+	sizeHint       float32 = 11
+	lineHint       float32 = 16
+	widthError     float32 = 280
+	widthCapsule   float32 = 300
+	minCapsule     float32 = 112
+	heightCapsule  float32 = 48
+	radiusCapsule  float32 = 24
+	radiusPanel    float32 = 18
+	radiusControl  float32 = 8
+	paddingY       float32 = 14
+	paddingX       float32 = 16
+	gapGroup       float32 = 8
 	// margin is the window's clear edge around the surface, for the shadow.
 	margin = 48
 
@@ -44,6 +50,7 @@ const (
 	fadeNib            = 220 * time.Millisecond
 	fadeSource         = 240 * time.Millisecond
 	drawCheck          = 180 * time.Millisecond
+	statusFor          = 3 * time.Second
 	riseText   float32 = 3
 	rateMin            = 30.0
 	rateMax            = 120.0

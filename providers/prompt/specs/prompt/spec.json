@@ -1,0 +1,11 @@
+{
+  "id": "prompt",
+  "name": "优化提示词",
+  "purpose": "改写用户自己写给 AI 助手的提示词或指令，让它更清晰有效，并替换回输入框：选中的通常是用户正在编辑、还没发出的请求。",
+  "output": "text",
+  "replaceable": true,
+  "order": 3,
+  "settings": [
+    {"key": "length", "type": "choice", "default": "相当", "options": ["更精简", "相当", "更完整"], "help": "改写后的篇幅和原文相比"}
+  ]
+}

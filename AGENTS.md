@@ -23,9 +23,13 @@ Issue 来自讨论。未经用户同意，不要创建 issue 或调整规划；�
 | 路径 | 职责 | 能依赖 |
 |---|---|---|
 | `core/` | Action、Block、流式引擎。产品的本体 | 只有标准库 |
-| `providers/` | 内置 Action 的实现 | `core` |
-| `capture/` | 读取其他应用的选中文本：Go 客户端和 Rust helper | 标准库 |
-| `app/` | mygo 界面层：快捷键、弹窗、视觉和动效 | 以上全部，唯一可用 mygo 的包 |
+| `providers/` | 内置 Action：`prompt`（声明驱动的四个功能）、`openai`（流式调用） | `core` |
+| `capture/` | 读取其他应用的选中文本、写回原选区：Go 客户端和 Rust helper | 标准库 |
+| `settings/` | 配置文件：产品设置和功能设置两层，Key 只在这里 | `core` |
+| `memory/` | 本地使用记录（不存文本）、偏好提炼、统计 | `core` |
+| `routing/` | 为一次取词选择功能：规则、Jev、记忆、默认 | `core`、`memory` |
+| `app/` | mygo 界面层：快捷键、弹窗、视觉和动效，把各层接起来 | 以上全部，唯一可用 mygo 的包 |
+| `cmd/` | 开发工具：`smoke`（真实服务冒烟）、`routebench`（规则与 Jev 对比） | 以上除 `app` |
 | `plugins/` | 官方插件（尚未开始） | 插件 API |
 | `docs/` | 项目记忆 | |
 | `.agents/skills/` | 共享工作流，`.claude/skills/` 只是入口 | |
@@ -44,6 +48,7 @@ Issue 来自讨论。未经用户同意，不要创建 issue 或调整规划；�
 make check   # 完成改动前必须通过：格式、vet、测试、helper 构建
 make test    # 只跑测试
 make run     # 构建并运行，默认快捷键 Option/Alt+Shift+D
+make app     # 打包 gloss.app（登录时启动需要它）
 ```
 
 更多见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)。

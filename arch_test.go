@@ -13,6 +13,10 @@ var forbidden = map[string][]string{
 	"gloss/capture":          {"github.com/egoist/mygo", "gloss/app", "gloss/core", "gloss/providers"},
 	"gloss/providers/demo":   {"github.com/egoist/mygo", "gloss/app", "gloss/capture"},
 	"gloss/providers/openai": {"github.com/egoist/mygo", "gloss/app", "gloss/capture"},
+	"gloss/providers/prompt": {"github.com/egoist/mygo", "gloss/app", "gloss/capture", "gloss/settings", "gloss/memory", "gloss/routing"},
+	"gloss/settings":         {"github.com/egoist/mygo", "gloss/app", "gloss/capture", "gloss/providers", "gloss/memory", "gloss/routing"},
+	"gloss/memory":           {"github.com/egoist/mygo", "gloss/app", "gloss/capture", "gloss/providers", "gloss/settings", "gloss/routing"},
+	"gloss/routing":          {"github.com/egoist/mygo", "gloss/app", "gloss/capture", "gloss/providers", "gloss/settings"},
 }
 
 func TestLayers(t *testing.T) {

@@ -1,18 +1,40 @@
-//! Platforms without an implementation yet. Windows goes here next.
-pub const API: &str = "none";
+//! Platforms without a helper yet: every request fails, and the app says so.
+use crate::Fail;
 
-pub fn button_down() -> bool {
-    false
+pub struct State;
+
+impl State {
+    pub fn new() -> State {
+        State
+    }
+}
+
+pub struct Selection {
+    pub text: String,
+    pub method: &'static str,
+    pub app: String,
+    pub title: String,
+    pub editable: &'static str,
+    pub before: String,
+    pub after: String,
+    pub token: u64,
+    pub ctx_us: u128,
 }
 
 pub fn trusted() -> bool {
     false
 }
 
-pub fn read_selection() -> Result<String, String> {
-    Err("selection is not implemented on this platform".into())
+pub fn button_down() -> bool {
+    false
 }
 
-pub fn copy_selection() -> Result<String, String> {
-    read_selection()
+pub fn selection(_: &mut State, _copy: bool, _copy_only: bool) -> Result<Selection, Fail> {
+    Err(Fail::new("failed", "not supported on this platform yet"))
 }
+
+pub fn replace(_: &mut State, _token: u64, _text: &str, _method: &str) -> Result<(&'static str, bool), Fail> {
+    Err(Fail::new("failed", "not supported on this platform yet"))
+}
+
+pub fn forget(_: &mut State, _token: u64) {}

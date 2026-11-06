@@ -5,3 +5,4 @@ mygo_windows_*.syso
 /capture/helper/target/
 .claude/settings.local.json
 .DS_Store
+/resources/darwin/gloss-capture
