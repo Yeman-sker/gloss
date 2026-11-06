@@ -63,7 +63,8 @@ var stickerImage = func() ui.ImageSource {
 	return img
 }()
 
-func prefsTheme(base *ui.Theme) *ui.Theme {
+// inkTheme is the look of both windows, for what mygo draws by itself.
+func inkTheme(base *ui.Theme) *ui.Theme {
 	t := *base
 	t.Dark = true
 	t.Background = inkDeep
@@ -79,7 +80,7 @@ func prefsTheme(base *ui.Theme) *ui.Theme {
 	t.AccentText = colorOnMarker
 	t.Danger = colorDanger
 	t.Success = colorSuccess
-	t.Selection = colorMarker.Alpha(0.28)
+	t.Selection = colorSelected
 	t.Focus = colorMarker.Alpha(0.6)
 	t.Scrollbar = colorScrollbar
 	t.Inverse, t.InverseText = inkPopup, colorText

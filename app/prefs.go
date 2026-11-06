@@ -329,7 +329,7 @@ func (p *prefs) set(key string, v any, keys ...string) error {
 // The look.
 
 func (p *prefs) view(c *ui.Context) {
-	c.SetTheme(prefsTheme(c.Theme()))
+	c.SetTheme(inkTheme(c.Theme()))
 	p.leavePage()
 	if !p.trusted {
 		p.askTrust(c)

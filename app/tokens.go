@@ -24,8 +24,11 @@ const (
 	widthPanel    float32 = 420
 	// widthReading is the reading layout's, for long and structured results.
 	widthReading   float32 = 520
-	widthMinFooter float32 = 340
+	widthMinFooter float32 = 344
 	heightFooter   float32 = 36
+	heightChip     float32 = 28 // a feature in the footer: its icon, 22, and the margin it carries
+	sizeChipIcon   float32 = 22
+	sizeActionMark float32 = 13
 	sizeHint       float32 = 11
 	lineHint       float32 = 16
 	widthError     float32 = 280
@@ -62,10 +65,10 @@ var (
 	colorSurface = ui.Hex("#17171B")
 	colorRim     = ui.RGBA(255, 255, 255, 0.1)
 	colorShadow  = ui.RGBA(0, 0, 0, 0.42)
+	colorContact = ui.RGBA(0, 0, 0, 0.24) // the shadow close under the panel
 	colorText    = ui.Hex("#E6E6E8")
 	colorSource  = ui.Hex("#ACACAD")
 	colorHint    = ui.Hex("#828284")
-	colorAccent  = ui.Hex("#6CB8FF")
 	colorSuccess = ui.Hex("#5EDBA5")
 	colorDanger  = ui.Hex("#FF7F6E")
 	colorControl = ui.RGBA(255, 255, 255, 0.08)
@@ -105,6 +108,9 @@ var (
 	washCard  = ui.RGBA(255, 255, 255, 0.028) // cards, tiles, a card's head under the pointer
 	washHover = ui.RGBA(255, 255, 255, 0.05)  // a quiet control under the pointer
 	washFill  = ui.RGBA(255, 255, 255, 0.07)  // tags, tracks, a switch that is off limits
+	washCode  = ui.RGBA(255, 255, 255, 0.04)  // code blocks and table heads in a result
+
+	colorSelected = colorMarker.Alpha(0.28) // selected text, in both windows
 
 	motionPop     = ui.SpringOptions{Duration: 150 * time.Millisecond}
 	motionGrow    = ui.SpringOptions{Duration: 280 * time.Millisecond, Bounce: 0.08}
@@ -139,6 +145,8 @@ const (
 // Motion of the settings window.
 const (
 	fadeHover  = 130 * time.Millisecond
+	tipDelay   = 600 * time.Millisecond // how long the pointer rests before a tip shows
+	tipWarm    = 400 * time.Millisecond // how soon after one tip another shows at once
 	swipeTime  = 240 * time.Millisecond
 	savedHold  = 700 * time.Millisecond
 	savedFade  = 320 * time.Millisecond

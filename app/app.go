@@ -789,6 +789,10 @@ func (s *shell) closed() {
 	if s.visible {
 		s.visible = false
 		s.win.Hide()
+		// The settings window may still be drawing the same icons.
+		if s.prefs == nil {
+			releaseIcons()
+		}
 		settle()
 	}
 }
@@ -859,8 +863,8 @@ func (s *shell) updateClickThrough() {
 			s.win.Invalidate()
 		}
 		setCursor(s.panel.wantCursor)
-	} else if s.panel.inCopy {
-		s.panel.inCopy = false
+	} else if s.panel.inCopy || s.panel.hot != "" {
+		s.panel.inCopy, s.panel.hot = false, ""
 		s.win.Invalidate()
 	}
 }

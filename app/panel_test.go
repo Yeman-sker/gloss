@@ -3,6 +3,8 @@ package app
 import (
 	"errors"
 	"fmt"
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -246,5 +248,191 @@ func TestPanelFailureOffersTheFix(t *testing.T) {
 	p.reset("again")
 	if p.fixDo != nil {
 		t.Error("the fix outlived its run")
+	}
+}
+
+// footerPanel has everything the footer can show, with the longest name on.
+func footerPanel() *panel {
+	return &panel{
+		done: true, current: "prompt", by: "rule", why: "规则判断", replaceable: true,
+		footerTop: -1000, output: core.BlockText, wantCursor: ui.CursorDefault,
+		features: []feature{{"translate", "翻译"}, {"explain", "释义"}, {"prompt", "优化提示词"}, {"agent", "整理输出"}},
+		replace:  func() {},
+		copied:   func(*ui.Context, string) {},
+	}
+}
+
+func countText(tt *ui.Tester, s string) int {
+	n := 0
+	for _, t := range tt.Texts() {
+		if t == s {
+			n++
+		}
+	}
+	return n
+}
+
+// pointAt puts the panel's pointer on a spot, as the shell's ticks read it.
+func pointAt(t *testing.T, p *panel, key string) {
+	t.Helper()
+	for _, s := range p.spots {
+		if s.key == key {
+			x, y := s.box.X+s.box.W/2-margin, s.box.Y+s.box.H/2-margin
+			p.local = func() (float32, float32) { return x, y }
+			p.track()
+			return
+		}
+	}
+	t.Fatalf("no spot %q in %+v", key, p.spots)
+}
+
+func footerTester(p *panel, width int) *ui.Tester {
+	tt := ui.NewTester(func(c *ui.Context) {
+		p.spots = p.spots[:0]
+		p.footerRow(c, float32(width), c.Now())
+		p.tipView(c, c.Now(), float32(width), 200)
+	}, width, 200)
+	tt.Advance(time.Second)
+	tt.Frame() // Bounds are the last frame's: the spots are good from this one.
+	return tt
+}
+
+// The one feature showing wears its name; the others are named for those who
+// cannot see their icons, and answer a click all the same.
+func TestFooterFeaturesAreIconsWithNames(t *testing.T) {
+	p := footerPanel()
+	var chose string
+	p.switchTo = func(id string) { chose = id }
+	tt := footerTester(p, 420)
+	if got := countText(tt, "优化提示词"); got != 2 {
+		t.Errorf("the one showing: label and text are %d, %q", got, tt.Texts())
+	}
+	if got := countText(tt, "释义"); got != 1 {
+		t.Errorf("another: label only is %d, %q", got, tt.Texts())
+	}
+	if err := tt.Click("释义"); err != nil {
+		t.Fatal(err)
+	}
+	if chose != "explain" {
+		t.Errorf("chose %q", chose)
+	}
+}
+
+// At its narrowest the footer still holds everything, side by side.
+func TestFooterFitsAtItsNarrowest(t *testing.T) {
+	p := footerPanel()
+	tt := footerTester(p, int(widthMinFooter))
+	last := float32(0)
+	for _, s := range []string{"翻译", "释义", "优化提示词", "整理输出", byLabel(p.by), "复制", "替换"} {
+		r, ok := tt.Find(s)
+		if !ok {
+			t.Fatalf("no %q in %q", s, tt.Texts())
+		}
+		if r.X < last {
+			t.Errorf("%q starts at %v, before the last ended at %v", s, r.X, last)
+		}
+		last = r.X + r.W
+	}
+	if last > widthMinFooter {
+		t.Errorf("ends at %v, past %v", last, widthMinFooter)
+	}
+}
+
+// mygo reports no hover while Gloss is not active, so the panel's own account
+// is what wakes a control and gives it the hand.
+func TestFooterHoverIsThePanelsOwn(t *testing.T) {
+	p := footerPanel()
+	footerTester(p, 420)
+	pointAt(t, p, "f-explain")
+	if p.hot != "f-explain" || p.wantCursor != ui.CursorPointer {
+		t.Errorf("on a feature: hot %q, cursor %v", p.hot, p.wantCursor)
+	}
+	pointAt(t, p, "by")
+	if p.hot != "by" || p.wantCursor != ui.CursorDefault {
+		t.Errorf("on what only explains: hot %q, cursor %v", p.hot, p.wantCursor)
+	}
+	p.local = func() (float32, float32) { return -500, -500 }
+	if !p.track() || p.hot != "" {
+		t.Errorf("off the footer: hot %q", p.hot)
+	}
+}
+
+func TestSpotBehindTheFooterIsNotHot(t *testing.T) {
+	p := &panel{features: []feature{{"a", "A"}, {"b", "B"}}, footerTop: 100, spots: []spot{{key: "code-0", box: ui.Rect{X: margin, Y: margin + 90, W: 50, H: 30}}}}
+	p.pointerAt(10, 95)
+	if p.hot != "code-0" {
+		t.Errorf("above the footer: hot %q", p.hot)
+	}
+	p.pointerAt(10, 110)
+	if p.hot != "" {
+		t.Errorf("behind the footer: hot %q", p.hot)
+	}
+}
+
+func TestTipWaitsThenStaysWarm(t *testing.T) {
+	p := footerPanel()
+	tt := footerTester(p, 420)
+	on := func(key string) {
+		t.Helper()
+		pointAt(t, p, key)
+		p.hotSince = tt.Now()
+		tt.Frame()
+	}
+	on("f-explain")
+	if got := countText(tt, "释义"); got != 1 {
+		t.Errorf("before the wait: %d", got)
+	}
+	tt.Advance(tipDelay + 50*time.Millisecond)
+	if got := countText(tt, "释义"); got != 2 {
+		t.Errorf("after the wait: %d in %q", got, tt.Texts())
+	}
+	on("copy") // a control with no tip
+	if got := countText(tt, "释义"); got != 1 {
+		t.Errorf("it stayed: %d", got)
+	}
+	on("f-agent") // straight after, along the row
+	if got := countText(tt, "整理输出"); got != 2 {
+		t.Errorf("warm: %d", got)
+	}
+	p.dragging = true
+	tt.Frame()
+	if got := countText(tt, "整理输出"); got != 1 {
+		t.Errorf("while dragged: %d", got)
+	}
+}
+
+// The one showing is named beside its icon, so it needs no tip.
+func TestTipNotOnTheFeatureShowing(t *testing.T) {
+	p := footerPanel()
+	tt := footerTester(p, 420)
+	pointAt(t, p, "f-prompt")
+	p.hotSince = tt.Now()
+	tt.Advance(tipDelay * 2)
+	if got := countText(tt, "优化提示词"); got != 2 {
+		t.Errorf("%d in %q", got, tt.Texts())
+	}
+}
+
+// Both windows take their colours from tokens.go. A colour worked out from
+// others, as mix does, is not a literal.
+func TestColorsComeFromTokens(t *testing.T) {
+	literal := regexp.MustCompile(`ui\.(Hex\(|RGBA?\(\s*\d)`)
+	for _, name := range []string{"panel.go", "prefs.go", "prefs_ui.go", "app.go", "glyphs.go", "icons.go"} {
+		src, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, line := range strings.Split(string(src), "\n") {
+			if literal.MatchString(line) {
+				t.Errorf("%s:%d: %s", name, i+1, strings.TrimSpace(line))
+			}
+		}
+	}
+}
+
+// The marker would swallow the white check mygo draws.
+func TestCheckedBoxKeepsItsCheck(t *testing.T) {
+	if mdTheme().Checkbox == colorMarker {
+		t.Error("a checked box in the marker's colour hides its check")
 	}
 }

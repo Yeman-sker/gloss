@@ -59,6 +59,18 @@ type springKey struct {
 	gen  uint64
 }
 
+// spot is a part of the panel that answers the pointer.
+type spot struct {
+	key string
+	box ui.Rect
+	// tip is what the panel says about it once the pointer has rested there.
+	tip string
+	// quiet is one that only explains: a press there does nothing.
+	quiet bool
+	// foot is in the footer, which covers what scrolls behind it.
+	foot bool
+}
+
 // feature is one the panel offers to switch to.
 type feature struct {
 	id, name string
@@ -143,15 +155,21 @@ type panel struct {
 
 	wantCursor ui.Cursor
 	inCopy     bool
-	retryBox   ui.Rect
-	fixBox     ui.Rect
-	surfaceW   float32
-	textTop    float32
-	local      func() (float32, float32)
-	closed     func()
-	copied     func(*ui.Context, string)
-	copyText   func() string
-	retry      func()
+	// What the pointer is on, found by the panel itself: see hover. spots are
+	// the things it can be on, as the last frame laid them out.
+	hot      string
+	hotSince time.Time
+	spots    []spot
+	inFooter bool
+	tipping  bool
+	tipGone  time.Time
+	surfaceW float32
+	textTop  float32
+	local    func() (float32, float32)
+	closed   func()
+	copied   func(*ui.Context, string)
+	copyText func() string
+	retry    func()
 	// explain words an error for the user, and says where to fix it.
 	explain  func(error) (msg, fix string, do func())
 	switchTo func(id string)
@@ -179,7 +197,7 @@ func (p *panel) reset(source string) {
 // clearRun empties what a run showed.
 func (p *panel) clearRun() {
 	p.blocks, p.failed, p.md = nil, "", ""
-	p.fix, p.fixDo, p.fixBox = "", nil, ui.Rect{}
+	p.fix, p.fixDo = "", nil
 	p.codeCopied = nil
 	p.netDone, p.done = false, false
 	p.doneAt, p.copiedAt = time.Time{}, time.Time{}
@@ -479,6 +497,8 @@ func (p *panel) view() func(*ui.Context) {
 		p.release(now)
 		p.follow()
 		p.track()
+		p.spots = p.spots[:0]
+		c.SetTheme(inkTheme(c.Theme()))
 		root := c.Root().Background(ui.Transparent)
 
 		wantW, wantH := p.target(c)
@@ -508,7 +528,7 @@ func (p *panel) view() func(*ui.Context) {
 		// The shadow lives outside the clip, the content inside it.
 		surface := ui.Box(c).Key(fmt.Sprintf("surface-%d", p.gen)).Absolute().Left(margin).Top(margin).
 			Width(w).Height(h).Radius(radius).Background(colorSurface).
-			Shadow(0, 14, 36, -6, colorShadow).Shadow(0, 2, 6, 0, ui.RGBA(0, 0, 0, 0.24)).
+			Shadow(0, 14, 36, -6, colorShadow).Shadow(0, 2, 6, 0, colorContact).
 			InsetShadow(0, 0, 0, 1, colorRim).
 			Opacity(alpha).TransformOrigin(min(1, max(0, p.anchor/max(w, 1))), 0).Cursor(p.wantCursor)
 
@@ -548,6 +568,7 @@ func (p *panel) view() func(*ui.Context) {
 			p.corner(c, now)
 			p.pinDot(c, surface)
 			p.toEnd(c, w, h-foot)
+			p.tipView(c, now, w, h)
 		})
 		if p.scroll.MaxY > 0 && p.scroll.Y < p.scroll.MaxY-4 && !p.scroll.Scrolling() {
 			p.following = false
@@ -684,10 +705,17 @@ func (p *panel) sourceRow(c *ui.Context, now time.Time, reduce bool) {
 		if p.sourceOpen {
 			hint = "收起原文"
 		}
-		tog := ui.Text(c, hint).Key("fold").Font(fontText).FontSize(sizeHint).LineHeight(lineHint / sizeHint).TextColor(colorHint).Cursor(ui.CursorPointer)
-		if tog.Hovered() {
-			tog.TextColor(colorSource)
+		tog := ui.ButtonBase(c.Key("fold")).Gap(2).AlignItems(ui.Center).AlignSelf(ui.Start).Cursor(p.wantCursor).Label(hint)
+		col := colorHint
+		if p.hover("fold", tog, "") {
+			col = colorSource
 		}
+		tog.TextColor(tog.AnimateColor("fg", col, hoverAnim))
+		turn := tog.AnimateTo("turn", b2f32(p.sourceOpen)*180, ui.Animation{Duration: rotateMenu, Ease: iconEase})
+		tog.Children(func() {
+			ui.Text(c, hint).Font(fontText).FontSize(sizeHint).LineHeight(lineHint / sizeHint).NoWrap()
+			glyphIcon(c, glyphCaret, sizeActionMark-1).Rotate(turn)
+		})
 		if tog.Clicked() {
 			p.sourceOpen = !p.sourceOpen
 		}
@@ -717,7 +745,7 @@ func sweepSpans(source string, t float64) []ui.Span {
 		return spans
 	}
 	add(runes[:from], colorText)
-	add(runes[from:to], colorAccent)
+	add(runes[from:to], colorMarker)
 	add(runes[to:], colorText)
 	return spans
 }
@@ -735,7 +763,7 @@ func (p *panel) blocksView(c *ui.Context, now time.Time) (ui.Element, ui.Element
 		for i, b := range p.blocks {
 			spans := p.spans(b, now, (!p.done || now.Sub(p.doneAt) < fadeNib) && i == len(p.blocks)-1)
 			el := ui.RichText(c.Key(fmt.Sprintf("%d-%d", p.run, i)), spans...).DrawObjects(func(pt *ui.Painter, _ int, r ui.Rect) {
-				pt.Fill(ui.Rect{X: r.X + 2, Y: r.Y, W: 2, H: r.H}, colorAccent.Alpha(p.nibAlpha(time.Now())), 1)
+				pt.Fill(ui.Rect{X: r.X + 2, Y: r.Y, W: 2, H: r.H}, colorMarker.Alpha(p.nibAlpha(time.Now())), 1)
 			})
 			text := b.settled.String()
 			switch b.kind {
@@ -748,7 +776,7 @@ func (p *panel) blocksView(c *ui.Context, now time.Time) (ui.Element, ui.Element
 				if isCJK(text) || isCJK(string(b.pending)) {
 					font = fontTextCJK
 				}
-				el.Font(font).FontSize(size).LineHeight(line / size).SelectionColor(colorAccent.Alpha(0.35))
+				el.Font(font).FontSize(size).LineHeight(line / size).SelectionColor(colorSelected)
 				if !found {
 					first, found = el, true
 				}
@@ -803,9 +831,64 @@ func (p *panel) track() bool {
 		return false
 	}
 	x, y := p.local()
-	was, cursor := p.inCopy, p.wantCursor
+	was, cursor, hot := p.inCopy, p.wantCursor, p.hot
 	p.wantCursor = p.pointerAt(x, y)
-	return p.inCopy != was || p.wantCursor != cursor
+	if p.hot != hot {
+		p.hotSince = time.Now()
+	}
+	return p.inCopy != was || p.wantCursor != cursor || p.hot != hot
+}
+
+// hover names a control for the pointer and says whether the pointer is on it.
+// mygo reports no hover and shows no tips while its app is not active, and
+// Gloss's is not, so the panel finds this itself, as it does for the cursor.
+func (p *panel) hover(key string, e ui.Element, tip string) bool {
+	p.spots = append(p.spots, spot{key: key, box: e.Bounds(), tip: tip, foot: p.inFooter})
+	return p.hot == key
+}
+
+// spotAt is the spot at a point in from the surface's top left: the last one
+// laid out on top. Not what scrolled behind the footer.
+func (p *panel) spotAt(x, y float32, inFooter bool) (spot, bool) {
+	for i := len(p.spots) - 1; i >= 0; i-- {
+		s := p.spots[i]
+		if s.box.W > 0 && s.box.Contains(x+margin, y+margin) && (s.foot || !inFooter) {
+			return s, true
+		}
+	}
+	return spot{}, false
+}
+
+// tipView is the tip of what the pointer rests on: above it, on the surface,
+// and through to whatever is under it.
+func (p *panel) tipView(c *ui.Context, now time.Time, w, h float32) {
+	var s spot
+	if !p.dragging {
+		for _, o := range p.spots {
+			if o.key == p.hot {
+				s = o
+			}
+		}
+	}
+	if s.tip == "" {
+		if p.tipping {
+			p.tipping, p.tipGone = false, now
+		}
+		return
+	}
+	if wait := tipDelay - now.Sub(p.hotSince); !p.tipping && wait > 0 && now.Sub(p.tipGone) > tipWarm {
+		c.After(wait)
+		return
+	}
+	p.tipping = true
+	const pad, most, gap = 8, 240, 6
+	width := min(measure(c, s.tip, fontText, sizeHint)+2*pad+1, most)
+	x := s.box.X - margin + (s.box.W-width)/2
+	ui.Box(c).Key("tip").Absolute().Left(max(gap, min(x, w-width-gap))).Bottom(h-(s.box.Y-margin)+gap).Width(width).
+		Padding(4, pad).Radius(radiusControl).Background(inkPopup).InsetShadow(0, 0, 0, 1, colorRim).Shadow(0, 2, 6, 0, colorContact).
+		PassThrough().Role(ui.RoleTooltip).Children(func() {
+		ui.Text(c, s.tip).Font(fontText).FontSize(sizeHint).LineHeight(lineHint / sizeHint).TextColor(colorText)
+	})
 }
 
 // pointerAt splits the surface into zones by where the pointer is, with one
@@ -821,9 +904,13 @@ func (p *panel) pointerAt(x, y float32) ui.Cursor {
 	}
 	inFooter := p.footer() && y >= p.footerTop
 	p.inCopy = p.textTop > 0 && y >= top && p.notice == "" && !inFooter
+	on, found := p.spotAt(x, y, inFooter)
+	p.hot = on.key
 	switch {
 	case p.dragging:
 		return ui.CursorGrabbing
+	case found && !on.quiet:
+		return ui.CursorPointer
 	case inFooter:
 		return ui.CursorDefault
 	case p.md != "" && p.mdTop > 0 && y >= p.mdTop:
@@ -831,11 +918,6 @@ func (p *panel) pointerAt(x, y float32) ui.Cursor {
 	case p.pinned && x >= p.surfaceW-24 && y < 24:
 		return ui.CursorPointer
 	case p.failed != "":
-		for _, b := range []ui.Rect{p.retryBox, p.fixBox} {
-			if b.W > 0 && b.Contains(x+margin, y+margin) {
-				return ui.CursorPointer
-			}
-		}
 		return ui.CursorGrab
 	case !p.inCopy:
 		return ui.CursorGrab
@@ -882,25 +964,29 @@ func (p *panel) failure(c *ui.Context) {
 		ui.Text(c, p.failed).Font(fontSource).FontSize(sizeSource).LineHeight(lineSource / sizeSource).TextColor(colorSource).Selectable()
 	})
 	ui.Row(c).Gap(8).AlignSelf(ui.Start).Children(func() {
-		retry := ui.Box(c).Key("retry").Height(24).Padding(0, 10).Radius(radiusControl).Background(colorDanger.Alpha(0.18)).Cursor(p.wantCursor).Children(func() {
-			ui.Text(c, "重试").Font(fontSource).FontSize(sizeSource).LineHeight(2).TextColor(colorText)
-		})
-		p.retryBox = retry.Bounds()
-		if retry.Clicked() && p.retry != nil {
+		if p.failureButton(c, "retry", "重试", glyphRetry, colorDanger.Alpha(0.18), colorDanger.Alpha(0.28)) && p.retry != nil {
 			p.retry()
 		}
-		if p.fixDo == nil {
-			p.fixBox = ui.Rect{}
-			return
-		}
-		fix := ui.Box(c).Key("fix").Height(24).Padding(0, 10).Radius(radiusControl).Background(colorControl).Cursor(p.wantCursor).Children(func() {
-			ui.Text(c, p.fix).Font(fontSource).FontSize(sizeSource).LineHeight(2).TextColor(colorText)
-		})
-		p.fixBox = fix.Bounds()
-		if fix.Clicked() {
+		if p.fixDo != nil && p.failureButton(c, "fix", p.fix, glyphTune, colorControl, colorEdge) {
 			p.fixDo()
 		}
 	})
+}
+
+// failureButton is one way out of a failure. It says whether it was clicked.
+func (p *panel) failureButton(c *ui.Context, key, label string, g *ui.SVG, rest, lit ui.Color) bool {
+	b := ui.ButtonBase(c.Key(key)).Height(24).Padding(0, 10, 0, 8).Gap(4).Radius(radiusControl).AlignItems(ui.Center).Cursor(p.wantCursor).Label(label)
+	bg := rest
+	if p.hover(key, b, "") {
+		bg = lit
+	}
+	b.Background(b.AnimateColor("bg", bg, hoverAnim)).TextColor(colorText)
+	pressable(b, scalePressed)
+	b.Children(func() {
+		glyphIcon(c, g, sizeActionMark)
+		ui.Text(c, label).Font(fontSource).FontSize(sizeSource).LineHeight(2).NoWrap()
+	})
+	return b.Clicked()
 }
 
 // corner is the quiet copy cue, and the check that answers a copy.
@@ -936,7 +1022,7 @@ func (p *panel) pinDot(c *ui.Context, surface ui.Element) {
 		return
 	}
 	dot := ui.Box(c).Key("pin").Absolute().Right(4).Top(4).Width(20).Height(20).AlignItems(ui.Center).Justify(ui.Center).Cursor(p.wantCursor).Children(func() {
-		ui.Box(c).Width(6).Height(6).Radius(3).Background(colorAccent).Scale(size, size)
+		ui.Box(c).Width(6).Height(6).Radius(3).Background(colorMarker).Scale(size, size)
 	})
 	if dot.Clicked() {
 		p.pinned = false
@@ -991,20 +1077,21 @@ func mdTheme() *markdown.Theme {
 		LineHeight:          lineBody / sizeBody / 1.2,
 		Text:                colorText,
 		Muted:               colorSource,
-		Link:                colorAccent,
+		Link:                colorMarker,
 		Strong:              colorText,
 		Code:                colorText,
 		CodeBackground:      colorControl,
 		QuoteBar:            colorRim,
 		QuoteText:           colorSource,
 		Rule:                colorRim,
-		CodeBlockBackground: ui.RGBA(255, 255, 255, 0.04),
+		CodeBlockBackground: washCode,
 		CodeBlockBorder:     colorRim,
 		CodeBlockRadius:     radiusControl,
 		CodeColors:          editor.DefaultTheme(ui.DarkTheme()),
 		TableBorder:         colorRim,
-		TableHeader:         ui.RGBA(255, 255, 255, 0.04),
-		Checkbox:            colorAccent,
+		TableHeader:         washCode,
+		// mygo draws the check in white: the marker would swallow it.
+		Checkbox: inkPlate,
 	}
 	sizes := [6]float32{1.25, 1.12, 1.04, 1, 1, 1}
 	for i := range th.Headings {
@@ -1037,17 +1124,18 @@ func (p *panel) markdownView(c *ui.Context) ui.Element {
 // codeBlock is a code block in the panel's words and icons: its language,
 // and a copy button that waits for the block to close.
 func (p *panel) codeBlock(c *ui.Context, b *markdown.CodeBlockView) {
-	box := ui.Column(c).Background(ui.RGBA(255, 255, 255, 0.04)).Border(1, colorRim).Radius(radiusControl).AlignSelf(ui.Stretch).Clip()
+	box := ui.Column(c).Background(washCode).Border(1, colorRim).Radius(radiusControl).AlignSelf(ui.Stretch).Clip()
 	box.Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Padding(4, 6, 0, 12).Children(func() {
 			ui.Text(c, b.Language).Font(fontSource).FontSize(sizeHint).TextColor(colorHint).Unselectable()
 			ui.Spacer(c)
 			at := p.codeCopied[b.Index]
 			copied := !at.IsZero() && c.Now().Sub(at) < 2*time.Second
-			btn := ui.Row(c).Height(22).Padding(0, 8).Gap(4).Radius(radiusControl).AlignItems(ui.Center).Cursor(ui.CursorPointer).Label("复制代码")
+			btn := ui.Row(c).Height(22).Padding(0, 8).Gap(4).Radius(radiusControl).AlignItems(ui.Center).Cursor(p.wantCursor).Label("复制代码")
+			hot := p.hover(fmt.Sprintf("code-%d", b.Index), btn, "")
 			if b.Open {
 				btn.Opacity(0.4)
-			} else if btn.Hovered() {
+			} else if hot {
 				btn.Background(colorControl)
 			}
 			icon, label, col := iconCopy, "复制", colorHint
@@ -1085,32 +1173,19 @@ func byLabel(by string) string {
 // footerRow is the bar under the result: the features, how the one
 // showing was chosen, and what can be done with the result.
 func (p *panel) footerRow(c *ui.Context, w float32, now time.Time) {
-	ui.Row(c).Key("footer").Width(w).Height(heightFooter).Padding(0, 10).Gap(4).AlignItems(ui.Center).
+	p.inFooter = true
+	defer func() { p.inFooter = false }()
+	ui.Row(c).Key("footer").Width(w).Height(heightFooter).Padding(0, 10, 0, 8).Gap(4).AlignItems(ui.Center).
 		InsetShadow(0, 1, 0, 0, colorRim).Children(func() {
 		if len(p.features) > 1 {
-			for _, f := range p.features {
-				f := f
-				on := f.id == p.current
-				chip := ui.Box(c).Key("f-"+f.id).Height(22).Padding(0, 8).Radius(11).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
-				col := colorHint
-				if on {
-					chip.Background(colorControl)
-					col = colorText
-				} else if chip.Hovered() {
-					col = colorSource
+			ui.Row(c).Key("features").Gap(2).AlignItems(ui.Center).Children(func() {
+				for _, f := range p.features {
+					p.featureChip(c, f)
 				}
-				chip.Children(func() {
-					ui.Text(c, f.name).Font(fontText).FontSize(sizeHint).LineHeight(lineHint / sizeHint).TextColor(col).NoWrap()
-				})
-				if chip.Clicked() && !on && p.switchTo != nil {
-					p.switchTo(f.id)
-				}
-			}
+			})
 			if p.current != "" {
-				lab := ui.Text(c, byLabel(p.by)).Key("by").Font(fontText).FontSize(sizeHint - 1).LineHeight(lineHint / (sizeHint - 1)).TextColor(colorHint).NoWrap().MarginStart(2)
-				if p.why != "" {
-					lab.Tooltip(p.why)
-				}
+				lab := ui.Text(c, byLabel(p.by)).Key("by").Font(fontText).FontSize(sizeHint - 1).LineHeight(lineHint / (sizeHint - 1)).TextColor(colorHint).NoWrap().Shrink(0)
+				p.spots = append(p.spots, spot{key: "by", box: lab.Bounds(), tip: p.why, quiet: true, foot: true})
 			}
 		}
 		ui.Box(c).Grow(1)
@@ -1118,7 +1193,14 @@ func (p *panel) footerRow(c *ui.Context, w float32, now time.Time) {
 			ui.Text(c, p.status).Key("status").Font(fontText).FontSize(sizeHint).LineHeight(lineHint / sizeHint).TextColor(p.statusTone).NoWrap()
 		}
 		if p.done && p.failed == "" && p.notice == "" {
-			p.action(c, "copy", "复制", func() {
+			mark, tone := iconCopy, colorSource
+			if since := now.Sub(p.copiedAt); !p.copiedAt.IsZero() && since < 1200*time.Millisecond {
+				mark, tone = iconCheck, colorSuccess
+				if since < drawCheck {
+					mark = checkIcon(float64(since) / float64(drawCheck))
+				}
+			}
+			p.action(c, "copy", "复制", mark, tone, func() {
 				if text := p.text(); text != "" && p.copied != nil {
 					p.copied(c, text)
 					p.copiedAt = now
@@ -1126,21 +1208,61 @@ func (p *panel) footerRow(c *ui.Context, w float32, now time.Time) {
 				}
 			})
 			if p.replaceable && p.replace != nil {
-				p.action(c, "replace", "替换", p.replace)
+				p.action(c, "replace", "替换", glyphSwap, colorSource, p.replace)
 			}
 		}
 	})
 }
 
-func (p *panel) action(c *ui.Context, key, label string, do func()) {
-	b := ui.Box(c).Key(key).Height(22).Padding(0, 9).Radius(radiusControl).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
-	col := colorSource
-	if b.Hovered() {
-		b.Background(colorControl)
-		col = colorText
+// featureChip is one feature in the footer. The one showing wears its name and
+// its icon awake; the others are an icon, which wakes under the pointer and is
+// named by a tip. Opening another moves the name across.
+func (p *panel) featureChip(c *ui.Context, f feature) {
+	on := f.id == p.current
+	key := "f-" + f.id
+	chip := ui.ButtonBase(c.Key(key)).Height(heightChip).Radius(radiusControl).AlignItems(ui.Center).Justify(ui.Start).Clip().Shrink(0).Cursor(p.wantCursor).Label(f.name)
+	tip := f.name
+	if on {
+		tip = ""
 	}
+	hot := p.hover(key, chip, tip)
+	var bg ui.Color
+	switch {
+	case on:
+		bg = colorControl
+	case hot:
+		bg = washHover
+	}
+	chip.Background(chip.AnimateColor("bg", bg, hoverAnim))
+	name := max(0, min(chip.Spring("name", b2f32(on), motionSettle), 1))
+	const inset = 9 // from the name to the chip's end
+	chip.Width(heightChip + (measure(c, f.name, fontText, sizeHint)+inset)*name)
+	pressable(chip, scaleGiveWay)
+	chip.Children(func() {
+		box := sizeChipIcon * visualSize
+		liveIcon(c, featureIcon(f.id), sizeChipIcon, on || hot).MarginStart((heightChip - box) / 2).MarginEnd((heightChip - box) / 2)
+		if name > 0.01 {
+			ui.Text(c, f.name).Font(fontText).FontSize(sizeHint).LineHeight(lineHint / sizeHint).TextColor(colorText).NoWrap().Shrink(0).Opacity(name)
+		}
+	})
+	if chip.Clicked() && !on && p.switchTo != nil {
+		p.switchTo(f.id)
+	}
+}
+
+// action is one thing to do with the result: a mark in the colour of its word.
+func (p *panel) action(c *ui.Context, key, label string, mark *ui.SVG, tone ui.Color, do func()) {
+	b := ui.ButtonBase(c.Key(key)).Height(22).Padding(0, 8, 0, 6).Gap(3).Radius(radiusControl).AlignItems(ui.Center).Justify(ui.Center).Shrink(0).Cursor(p.wantCursor).Label(label)
+	var bg ui.Color
+	text := colorSource
+	if p.hover(key, b, "") {
+		bg, text = colorControl, colorText
+	}
+	b.Background(b.AnimateColor("bg", bg, hoverAnim)).TextColor(b.AnimateColor("fg", text, hoverAnim))
+	pressable(b, scalePressed)
 	b.Children(func() {
-		ui.Text(c, label).Font(fontText).FontSize(sizeHint).LineHeight(lineHint / sizeHint).TextColor(col).NoWrap()
+		ui.Icon(c, mark).FontSize(sizeActionMark).Shrink(0).TextColor(tone)
+		ui.Text(c, label).Font(fontText).FontSize(sizeHint).LineHeight(lineHint / sizeHint).NoWrap()
 	})
 	if b.Clicked() {
 		do()
@@ -1153,10 +1275,17 @@ func (p *panel) toEnd(c *ui.Context, w, bottom float32) {
 	if !p.reading || p.following || p.scroll.MaxY <= 0 || p.done {
 		return
 	}
-	b := ui.Box(c).Key("to-end").Absolute().Left(w/2-44).Top(bottom-34).Width(88).Height(24).Radius(12).
-		Background(ui.Hex("#26262C")).InsetShadow(0, 0, 0, 1, colorRim).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
+	b := ui.ButtonBase(c.Key("to-end")).Absolute().Left(w/2-44).Top(bottom-34).Width(88).Height(24).Radius(12).Gap(3).
+		InsetShadow(0, 0, 0, 1, colorRim).AlignItems(ui.Center).Justify(ui.Center).Cursor(p.wantCursor).Label("回到底部").TextColor(colorText)
+	bg := inkPopup
+	if p.hover("to-end", b, "") {
+		bg = inkPlate
+	}
+	b.Background(b.AnimateColor("bg", bg, hoverAnim))
+	pressable(b, scalePressed)
 	b.Children(func() {
-		ui.Text(c, "回到底部").Font(fontText).FontSize(sizeHint).LineHeight(lineHint / sizeHint).TextColor(colorText).NoWrap()
+		glyphIcon(c, glyphDown, sizeActionMark)
+		ui.Text(c, "回到底部").Font(fontText).FontSize(sizeHint).LineHeight(lineHint / sizeHint).NoWrap()
 	})
 	if b.Clicked() {
 		p.following = true

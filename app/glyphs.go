@@ -28,6 +28,11 @@ var (
 	glyphBack   = glyph(`<path d="M9.800 3.600 5.400 8l4.400 4.400"/>`)
 	glyphNext   = glyph(`<path d="M6.200 3.600 10.600 8l-4.400 4.400"/>`)
 	glyphStar   = glyph(`<path d="m8 2.400 1.700 3.500 3.900.6-2.800 2.700.7 3.800L8 11.200 4.500 13l.7-3.800-2.800-2.700 3.900-.6L8 2.400Z"/>`)
+	glyphSwap   = glyph(`<path d="M3 5.600h9.600M10 3l2.600 2.600L10 8.200M13 10.400H3.400M6 7.800l-2.600 2.600L6 13"/>`)
+	glyphRetry  = glyph(`<path d="M13 3.200v3.300H9.700"/><path d="M12.700 6.500A5.200 5.200 0 1 0 13 9.300"/>`)
+	glyphTune   = glyph(`<path d="M2.600 5h5.100M11.900 5h1.500M2.600 11h1.500M8.300 11h5.100"/><circle cx="9.800" cy="5" r="2.100"/><circle cx="6.200" cy="11" r="2.100"/>`)
+	glyphDown   = glyph(`<path d="M8 3v9.600M4 8.600l4 4 4-4"/>`)
+	glyphCaret  = glyph(`<path d="m4.200 6.200 3.800 3.800 3.800-3.800"/>`)
 )
 
 // glyphIcon draws a glyph in the colour of the text around it.
