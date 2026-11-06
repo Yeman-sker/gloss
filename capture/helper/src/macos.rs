@@ -529,9 +529,20 @@ fn copy_selection(app: CFRef, pid: i32) -> Result<(String, &'static str), Fail> 
 
 // --- Where the selection is.
 
-/// front_pid is the app with the focus: the system-wide element names it,
-/// or else the owner of the frontmost normal window. Neither starts a
-/// process, as lsappinfo did.
+/// frontmost says whether an app reports itself the one in front.
+fn frontmost(pid: i32) -> bool {
+    let app = Cf(unsafe { AXUIElementCreateApplication(pid) });
+    attr(app.0, "AXFrontmost").is_ok_and(|v| unsafe { CFEqual(v.0, kCFBooleanTrue) })
+}
+
+/// front_pid is the app with the focus: the system-wide element names it, or
+/// else the first owner of a normal window that says it is in front. Neither
+/// starts a process, as lsappinfo did.
+///
+/// Chromium's apps leave AXFocusedApplication without a value, so with them
+/// this always comes to the windows. The top window is not enough there: an
+/// overlay of another app can lie above the app in front (measured: Cua
+/// Driver above Arc, which then got the Cmd+C).
 fn front_pid(system: CFRef) -> Option<i32> {
     let me = std::process::id() as i64;
     let parent = unsafe { libc_getppid() } as i64;
@@ -550,18 +561,28 @@ fn front_pid(system: CFRef) -> Option<i32> {
             return None;
         }
         let (layer_key, pid_key) = (cfstr("kCGWindowLayer"), cfstr("kCGWindowOwnerPID"));
+        let mut top = None;
+        let mut asked = HashSet::new();
         for i in 0..CFArrayGetCount(list.0) {
             let w = CFArrayGetValueAtIndex(list.0, i);
             if to_i64(CFDictionaryGetValue(w, layer_key.0)) != Some(0) {
                 continue;
             }
             match to_i64(CFDictionaryGetValue(w, pid_key.0)) {
-                Some(p) if p != me && p != parent => return Some(p as i32),
+                Some(p) if p != me && p != parent => {
+                    let p = p as i32;
+                    top = top.or(Some(p));
+                    if asked.insert(p) && frontmost(p) {
+                        return Some(p);
+                    }
+                }
                 _ => {}
             }
         }
+        // Nobody claims it: Gloss itself is in front, say. The top window is
+        // the best guess at the app under it.
+        top
     }
-    None
 }
 
 extern "C" {
@@ -634,8 +655,9 @@ pub struct Selection {
 
 /// wake asks an app for its accessibility tree, which Electron builds only
 /// for assistive technology. It reports whether this is the first time, when
-/// the tree may not be there yet. Chromium refuses this attribute: there the
-/// selection comes by copying (docs/research/2026-11-06-arc-capture.md).
+/// the tree may not be there yet. Chrome and Chromium refuse this attribute,
+/// and there the selection comes by copying; Arc takes it
+/// (docs/research/2026-11-06-arc-capture.md).
 fn wake(state: &mut State, app: CFRef, pid: i32) -> bool {
     if !state.woken.insert(pid) {
         return false;
