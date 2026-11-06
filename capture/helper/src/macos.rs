@@ -1,4 +1,5 @@
-//! macOS: Accessibility first, a simulated Cmd+C when an app offers none.
+//! macOS: Accessibility first; when an app offers none, its own Copy menu item,
+//! then a simulated Cmd+C.
 //! Every Create or Copy is held by a Cf, which releases it. AppKit (the
 //! clipboard, an app's bundle id) is reached through the Objective-C
 //! runtime, with no crate.
@@ -30,6 +31,7 @@ extern "C" {
     fn AXUIElementCopyParameterizedAttributeValue(el: CFRef, attr: CFRef, param: CFRef, out: *mut CFRef) -> i32;
     fn AXUIElementIsAttributeSettable(el: CFRef, attr: CFRef, out: *mut u8) -> i32;
     fn AXUIElementSetAttributeValue(el: CFRef, attr: CFRef, value: CFRef) -> i32;
+    fn AXUIElementPerformAction(el: CFRef, action: CFRef) -> i32;
     fn AXUIElementGetPid(el: CFRef, pid: *mut i32) -> i32;
     fn AXUIElementSetMessagingTimeout(el: CFRef, seconds: f32) -> i32;
     fn AXValueCreate(kind: u32, value: *const c_void) -> CFRef;
@@ -53,6 +55,7 @@ extern "C" {
     fn CFStringGetTypeID() -> usize;
     fn CFNumberGetTypeID() -> usize;
     fn CFNumberGetValue(n: CFRef, kind: isize, out: *mut c_void) -> bool;
+    fn CFArrayGetTypeID() -> usize;
     fn CFArrayGetCount(a: CFRef) -> isize;
     fn CFArrayGetValueAtIndex(a: CFRef, i: isize) -> CFRef;
     fn CFDictionaryGetValue(d: CFRef, key: CFRef) -> CFRef;
@@ -102,6 +105,15 @@ const EXCLUDE_DESKTOP: u32 = 16;
 const AROUND: isize = 300;
 /// Above this size the whole value of a field is not read for its context.
 const MAX_VALUE: isize = 20_000;
+/// Edit is the fourth menu of every app measured, so it is looked at first.
+const EDIT_MENU: usize = 3;
+/// How long to look for Copy among an app's menus before going without it.
+const MENU_SCAN: Duration = Duration::from_millis(150);
+/// How long a pressed Copy has to reach the clipboard before Cmd+C is tried
+/// too. It took 2 to 24ms in Chrome and Chromium.
+const MENU_WAIT: Duration = Duration::from_millis(150);
+/// How long a Cmd+C has to reach the clipboard.
+const KEY_WAIT: Duration = Duration::from_millis(600);
 
 pub fn button_down() -> bool {
     unsafe { CGEventSourceButtonState(0, 0) }
@@ -223,6 +235,17 @@ fn range_attr(el: CFRef) -> Option<CFRange> {
     let v = attr(el, "AXSelectedTextRange").ok()?;
     let mut r = CFRange { location: 0, length: 0 };
     unsafe { AXValueGetValue(v.0, AX_RANGE, &mut r as *mut CFRange as *mut c_void) }.then_some(r)
+}
+
+/// The elements under el, each held for as long as the caller needs it.
+fn children(el: CFRef) -> Vec<Cf> {
+    let Ok(kids) = attr(el, "AXChildren") else { return Vec::new() };
+    unsafe {
+        if CFGetTypeID(kids.0) != CFArrayGetTypeID() {
+            return Vec::new();
+        }
+        (0..CFArrayGetCount(kids.0)).map(|i| Cf::retain(CFArrayGetValueAtIndex(kids.0, i))).collect()
+    }
 }
 
 fn string_for_range(el: CFRef, r: CFRange) -> Option<String> {
@@ -409,36 +432,99 @@ fn press(pid: i32, key: u16) {
     }
 }
 
-/// copy_selection asks the app to copy, reads what it copied, and puts back
-/// every item and type the clipboard held, unless something else wrote it
-/// in the meantime: then that newer content stays.
-fn copy_selection(pid: i32) -> Result<String, Fail> {
-    // Wait for the keys first: what the clipboard holds after this is the
-    // user's, and only a change after Cmd+C is the copy.
-    wait_for_keys_up();
-    let snapshot = Snapshot::take();
-    let before = change_count();
-    press(pid, KEY_C);
+/// copy_item finds the app's Copy in its menu bar by its key equivalent,
+/// Command+C with no other modifier, which no language changes.
+fn copy_item(app: CFRef) -> Option<Cf> {
+    let bar = attr(app, "AXMenuBar").ok()?;
+    let mut tops = children(bar.0);
+    if tops.len() > EDIT_MENU {
+        tops.swap(0, EDIT_MENU);
+    }
     let start = Instant::now();
-    let mut copied = None;
-    while start.elapsed() < Duration::from_millis(600) {
-        let now = change_count();
-        if now != before {
+    for top in &tops {
+        for menu in children(top.0) {
+            for item in children(menu.0) {
+                if start.elapsed() > MENU_SCAN {
+                    return None;
+                }
+                let key = string_attr(item.0, "AXMenuItemCmdChar");
+                let plain = attr(item.0, "AXMenuItemCmdModifiers").ok().and_then(|m| to_i64(m.0)) == Some(0);
+                if plain && key.is_some_and(|k| k.eq_ignore_ascii_case("c")) {
+                    return Some(item);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// press_copy presses the app's Copy. It says whether the app took the press,
+/// and in words what happened, for the log. A disabled item is left alone,
+/// but says nothing of the selection: apps may update it only when the menu
+/// opens, and Chromium's stays enabled with nothing selected.
+fn press_copy(app: CFRef) -> (bool, String) {
+    let Some(item) = copy_item(app) else { return (false, "no Copy item".into()) };
+    if attr(item.0, "AXEnabled").is_ok_and(|e| unsafe { !CFEqual(e.0, kCFBooleanTrue) }) {
+        return (false, "Copy disabled".into());
+    }
+    let action = cfstr("AXPress");
+    match unsafe { AXUIElementPerformAction(item.0, action.0) } {
+        0 => (true, "Copy pressed".into()),
+        err => (false, format!("Copy refused ({err})")),
+    }
+}
+
+/// wait_for_copy waits for the clipboard to change from before, and then
+/// reads it: its change count, to know whether it may be put back, and text.
+fn wait_for_copy(before: i64, limit: Duration) -> Option<(i64, Option<String>)> {
+    let start = Instant::now();
+    while start.elapsed() < limit {
+        if change_count() != before {
             // An app may clear the clipboard and write it in two steps.
             std::thread::sleep(Duration::from_millis(15));
-            copied = Some((change_count(), clipboard_text()));
-            break;
+            return Some((change_count(), clipboard_text()));
         }
         std::thread::sleep(Duration::from_millis(5));
     }
+    None
+}
+
+/// copy_selection has the app copy, reads what it copied, and puts back every
+/// item and type the clipboard held, unless something else wrote it in the
+/// meantime: then that newer content stays.
+///
+/// Its own Copy comes first: it reaches the app whatever window has the
+/// keyboard, with no keys to wait for and none for the page to see. Cmd+C
+/// remains for the app whose menu does not copy.
+fn copy_selection(app: CFRef, pid: i32) -> Result<(String, &'static str), Fail> {
+    let mut snapshot = Snapshot::take();
+    let mut before = change_count();
+    let (pressed, tried) = press_copy(app);
+    let mut method = "menu";
+    let mut copied = if pressed { wait_for_copy(before, MENU_WAIT) } else { None };
+    if copied.is_none() {
+        wait_for_keys_up();
+        // Without a press of ours, a change while the keys were held is the
+        // user's own copy, and only a change after Cmd+C is this one.
+        if !pressed && change_count() != before {
+            snapshot = Snapshot::take();
+            before = change_count();
+        }
+        press(pid, KEY_C);
+        method = "copy";
+        copied = wait_for_copy(before, KEY_WAIT);
+    }
     let Some((count, text)) = copied else {
         // Nothing was copied, so there is nothing to put back.
-        return Err(Fail::new("no_selection", "copy produced nothing"));
+        return Err(Fail::new("no_selection", format!("{tried}, Cmd+C sent, the clipboard did not change")));
     };
     if change_count() == count {
         snapshot.restore();
     }
-    text.filter(|t| !t.trim().is_empty()).ok_or_else(|| Fail::new("no_selection", "copy produced no text"))
+    match text.filter(|t| !t.trim().is_empty()) {
+        Some(t) => Ok((t, method)),
+        None => Err(Fail::new("no_selection", format!("{tried}, {method} copied no text"))),
+    }
 }
 
 // --- Where the selection is.
@@ -496,8 +582,8 @@ pub struct State {
     targets: HashMap<u64, Target>,
     order: Vec<u64>,
     next: u64,
-    /// apps asked to build their accessibility tree, as Electron and
-    /// Chromium apps do only when asked.
+    /// apps asked to build their accessibility tree, as Electron apps do
+    /// only when asked.
     woken: HashSet<i32>,
 }
 
@@ -546,9 +632,10 @@ pub struct Selection {
     pub ctx_us: u128,
 }
 
-/// wake asks an app for its accessibility tree, which Electron and Chromium
-/// build only for assistive technology. It reports whether this is the
-/// first time, when the tree may not be there yet.
+/// wake asks an app for its accessibility tree, which Electron builds only
+/// for assistive technology. It reports whether this is the first time, when
+/// the tree may not be there yet. Chromium refuses this attribute: there the
+/// selection comes by copying (docs/research/2026-11-06-arc-capture.md).
 fn wake(state: &mut State, app: CFRef, pid: i32) -> bool {
     if !state.woken.insert(pid) {
         return false;
@@ -592,6 +679,14 @@ fn around(el: CFRef, r: CFRange) -> (String, String) {
     let from = at.saturating_sub(AROUND as usize);
     let to = (end + AROUND as usize).min(units.len());
     (String::from_utf16_lossy(&units[from..at]), String::from_utf16_lossy(&units[end..to]))
+}
+
+fn or_unknown(app: &str) -> &str {
+    if app.is_empty() {
+        "unknown app"
+    } else {
+        app
+    }
 }
 
 pub fn selection(state: &mut State, copy: bool, copy_only: bool) -> Result<Selection, Fail> {
@@ -646,8 +741,14 @@ pub fn selection(state: &mut State, copy: bool, copy_only: bool) -> Result<Selec
         out.editable = editable_of(el.0);
     }
     out.ctx_us = ctx_start.elapsed().as_micros();
-    out.text = copy_selection(pid)?;
-    out.method = "copy";
+    // Which app, and what was tried, for the log: never the text.
+    (out.text, out.method) = copy_selection(app.0, pid).map_err(|f| {
+        let ax = match attr(app.0, "AXFocusedUIElement") {
+            Ok(_) => "focus without selected text".to_string(),
+            Err(e) => format!("no focus ({e})"),
+        };
+        Fail::new(f.code, format!("{}: {ax}; {}", or_unknown(&out.app), f.msg))
+    })?;
     if let Some(el) = focused {
         let editable = out.editable;
         out.token = state.remember(Target { pid, element: el, text: out.text.clone(), range: None, editable });

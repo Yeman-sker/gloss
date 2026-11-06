@@ -5,7 +5,7 @@
 //!   {"id":1,"cmd":"check"}                  {"id":1,"trusted":bool}
 //!   {"id":1,"cmd":"check","prompt":true}    the same, and macOS's prompt when not
 //!   {"id":2,"cmd":"button"}                 {"id":2,"down":bool}
-//!   {"id":3,"cmd":"selection","copy":true}  {"id":3,"ok":true,"text":..,"method":"ax"|"copy","us":..,
+//!   {"id":3,"cmd":"selection","copy":true}  {"id":3,"ok":true,"text":..,"method":"ax"|"menu"|"copy","us":..,
 //!                                            "app":..,"title":..,"editable":"yes"|"no"|"unknown",
 //!                                            "before":..,"after":..,"token":..,"ctx_us":..}
 //!   {"id":4,"cmd":"replace","token":7,"text":"..","method":"auto"|"paste"|"ax"}
@@ -15,8 +15,9 @@
 //! A failure is {"id":..,"ok":false,"code":..,"error":..}. Codes: permission
 //! (no Accessibility access), no_selection, changed (the target moved since
 //! it was read), not_editable, unverifiable, expired, failed, bad_request.
-//! "copy" lets selection fall back to a simulated Cmd+C, which keeps every
-//! format of the clipboard; "copy_only", for tests, skips Accessibility. A token names where a selection was read; only
+//! "copy" lets selection fall back to the app's Copy menu item and then a
+//! simulated Cmd+C, which keep every format of the clipboard; "copy_only", for
+//! tests, skips Accessibility. A token names where a selection was read; only
 //! replace uses it, and only after checking the target is as it was.
 //!
 //! The words check, button, selection and "selection copy" alone on a line

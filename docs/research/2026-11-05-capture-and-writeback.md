@@ -25,7 +25,7 @@
 | 前后文 | 用 `AXStringForRange` 取选区前后各 300 个 UTF-16 单元；失败时只在全文不超过 20000 字时读 `AXValue` 截取。前后文只填进 `Request.Context.Surrounding` |
 | 耗时 | 新进程第一次约 72–111ms（加载 AppKit），之后 0.2–5ms。旧 helper 每次 6–8ms，主要花在启动 `lsappinfo` 查询前台应用上 |
 
-未测：浏览器、终端、备忘录、Electron 应用里各信号能否取到。
+未测：浏览器、终端、备忘录、Electron 应用里各信号能否取到。Chromium 内核的浏览器后来测了，见 [Arc 排查](2026-11-06-arc-capture.md)。
 
 ## 剪贴板恢复（GLO-8）
 

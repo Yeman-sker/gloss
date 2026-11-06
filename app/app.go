@@ -323,7 +323,12 @@ func (s *shell) captured(r capture.Result, err error, took time.Duration) {
 		err = capture.ErrNoSelection
 	}
 	if err != nil {
-		log.Printf("capture: %s", errKind(err))
+		if errors.Is(err, capture.ErrNoSelection) {
+			// The helper says which app and what it tried, never the text.
+			log.Print(err)
+		} else {
+			log.Printf("capture: %s", errKind(err))
+		}
 		if s.open() && s.panel.notice == "" && errors.Is(err, capture.ErrNoSelection) {
 			s.hide()
 			return

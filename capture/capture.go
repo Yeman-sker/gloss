@@ -50,7 +50,7 @@ var codes = map[string]error{
 // Result is a selection and what the helper could tell about where it is.
 type Result struct {
 	Text     string `json:"text"`
-	Method   string `json:"method"`   // "ax" or "copy"
+	Method   string `json:"method"`   // "ax", "menu" or "copy"
 	Micros   int64  `json:"us"`       // the helper's time, context included
 	App      string `json:"app"`      // the bundle id of the app, when known
 	Title    string `json:"title"`    // its window's title, when known
@@ -285,7 +285,8 @@ func failure(r reply) error {
 // SelectionTimeout bounds a selection, the simulated copy included.
 var SelectionTimeout = 2 * time.Second
 
-// Selection asks for the selection, falling back to a simulated copy.
+// Selection asks for the selection, falling back to a copy: the app's own
+// Copy menu item, then a simulated Cmd+C.
 func (h *Helper) Selection() (Result, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
