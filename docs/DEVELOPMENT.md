@@ -14,7 +14,9 @@
 | `make test` | Go 和 Rust 测试 |
 | `make build` | 构建到 `bin/` |
 | `make run` | 构建并运行 |
+| `make helper` | 构建 helper，放到 `bin/` 和 `resources/darwin/`。`go tool mygo dev` 打包时用后者，也不会自己构建 helper：改了 helper 要跑这一步 |
 | `make app` | 打包 `build/darwin-arm64/Gloss.app`，helper 放进 `Contents/Resources`。“登录时启动”需要从 .app 运行 |
+| `make icons` | 把 `design/icons/` 烘焙成 `app/icons/*.svgz`，把 `design/icon/gloss-tray-icon.svg` 导出成 `app/tray.png`，需要 Node 和 Chrome。结果已入库，只有改图标时才跑，见[决策 0012](decisions/0012-baked-icons.md) |
 | `go run . stats [天数]` | 记忆里的路由统计（改正率、已确认准确率、未知比例、回退率、耗时） |
 | `go run . recent [条数]`、`go run . label <会话> right\|wrong` | 查看最近的会话（不含文本），给会话标注对错 |
 | `go run ./cmd/smoke` | 用配置里的真实服务测各功能的首字和总耗时，以及错误 Key、连不上时的提示 |
@@ -23,6 +25,8 @@
 结束程序：点托盘图标选“退出”，或在终端按 Ctrl+C。
 
 调试面板卡顿：`GLOSS_FRAMELOG=1 ./bin/gloss`，动画期间超过 25ms 的帧间隔会写进日志。
+
+调试取词：看 `~/Library/Logs/Gloss/gloss.log`。成功时写走了哪条路（`ax`、`menu`、`copy`）和来源应用；取不到时写来源应用和试过什么，从不含文字。如果写的不是你正在用的应用，就是前台判断错了。
 
 ## 配置
 
@@ -72,6 +76,22 @@
 ## 诊断日志
 
 macOS 上在 `~/Library/Logs/Gloss/gloss.log`（权限 0600），满 1 MB 时轮换，只留一个旧文件 `gloss.log.1`。日志只记事件、耗时、错误类别和来源应用，不记选中的文字、结果、窗口标题和 Key（`app/logfile.go` 的 `errKind`）。设置 › 通用 › 诊断日志 › 显示日志。
+
+## 发布
+
+目前发到私有仓库的 GitHub Release：ad-hoc 签名，不公证，没有自动更新。
+
+1. 改版本号：`app/prefs.go` 的 `Version` 和 `mygo.json`。
+2. `make check`，同步文档，提交到 main 并推送。
+3. 工作区干净时运行 `make app`，产物是 `build/darwin-arm64/gloss-<版本>-arm64.dmg`。
+4. 打 tag 并发布：`git tag -a v<版本> -m "Gloss <版本>"`，`git push origin v<版本>`，`gh release create v<版本> <dmg> --verify-tag --title "Gloss <版本>" --notes-file <说明>`。
+5. 用 `gh release download` 下载回来，核对校验和。
+
+试下载版之前：
+
+- **先停掉开发版。** `mygo dev` 的 `Gloss Dev` 和正式版单实例锁不同，能同时运行，都报告 `ready` 而不提示冲突，但抢同一个快捷键，共用配置和记忆文件。
+- **Gatekeeper。** 浏览器下载的文件带隔离属性，装好后运行 `xattr -dr com.apple.quarantine /Applications/Gloss.app`。`gh release download` 下载的不带。
+- **辅助功能权限。** ad-hoc 签名的每个构建身份不同。如果开关开着却提示没有权限，把列表里的 Gloss 删掉重新添加（推测，未测）。
 
 ## 规划（Linear）
 
