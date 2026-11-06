@@ -29,6 +29,8 @@ const (
 	heightChip     float32 = 28 // a feature in the footer: its icon, 22, and the margin it carries
 	sizeChipIcon   float32 = 22
 	sizeActionMark float32 = 13
+	padBubble      float32 = 8 // a tip or status over the panel: its side padding
+	gapBubble      float32 = 6 // and how far it stays from what it is about
 	sizeHint       float32 = 11
 	lineHint       float32 = 16
 	widthError     float32 = 280

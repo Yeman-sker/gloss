@@ -278,7 +278,7 @@ func (p *panel) apply(ev core.Event) {
 	}
 }
 
-// setStatus shows a short message in the footer.
+// setStatus shows how a replace went, over the footer: see statusView.
 func (p *panel) setStatus(text string, tone ui.Color) {
 	p.status, p.statusTone, p.statusAt = text, tone, time.Now()
 }
@@ -568,6 +568,7 @@ func (p *panel) view() func(*ui.Context) {
 			p.corner(c, now)
 			p.pinDot(c, surface)
 			p.toEnd(c, w, h-foot)
+			p.statusView(c, now, w, foot)
 			p.tipView(c, now, w, h)
 		})
 		if p.scroll.MaxY > 0 && p.scroll.Y < p.scroll.MaxY-4 && !p.scroll.Scrolling() {
@@ -881,13 +882,34 @@ func (p *panel) tipView(c *ui.Context, now time.Time, w, h float32) {
 		return
 	}
 	p.tipping = true
-	const pad, most, gap = 8, 240, 6
-	width := min(measure(c, s.tip, fontText, sizeHint)+2*pad+1, most)
+	width := bubbleWidth(c, s.tip, 240)
 	x := s.box.X - margin + (s.box.W-width)/2
-	ui.Box(c).Key("tip").Absolute().Left(max(gap, min(x, w-width-gap))).Bottom(h-(s.box.Y-margin)+gap).Width(width).
-		Padding(4, pad).Radius(radiusControl).Background(inkPopup).InsetShadow(0, 0, 0, 1, colorRim).Shadow(0, 2, 6, 0, colorContact).
-		PassThrough().Role(ui.RoleTooltip).Children(func() {
-		ui.Text(c, s.tip).Font(fontText).FontSize(sizeHint).LineHeight(lineHint / sizeHint).TextColor(colorText)
+	bubble(c, "tip", s.tip, colorText, width).Left(max(gapBubble, min(x, w-width-gapBubble))).Bottom(h - (s.box.Y - margin) + gapBubble).Role(ui.RoleTooltip)
+}
+
+// statusView says how a replace went, just above the buttons. It floats because
+// the footer has no room to spare at its narrowest: a line in it pushed them out
+// of the panel, and these messages say what to do next, so none can be cut short.
+func (p *panel) statusView(c *ui.Context, now time.Time, w, foot float32) {
+	since := now.Sub(p.statusAt)
+	if p.status == "" || foot <= 0 || since >= statusFor {
+		return
+	}
+	width := bubbleWidth(c, p.status, w-2*gapBubble)
+	bubble(c, "status", p.status, p.statusTone, width).Right(gapBubble).Bottom(foot + gapBubble).Role(ui.RoleStatus).
+		Opacity(min(1, float32(since)/float32(fadeHover), float32(statusFor-since)/float32(fadeHover)))
+}
+
+func bubbleWidth(c *ui.Context, text string, most float32) float32 {
+	return min(measure(c, text, fontText, sizeHint)+2*padBubble+1, most)
+}
+
+// bubble is a few words over the panel, on the surface and through to whatever
+// is under them.
+func bubble(c *ui.Context, key, text string, tone ui.Color, width float32) ui.Element {
+	return ui.Box(c).Key(key).Absolute().Width(width).Padding(4, padBubble).Radius(radiusControl).Background(inkPopup).
+		InsetShadow(0, 0, 0, 1, colorRim).Shadow(0, 2, 6, 0, colorContact).PassThrough().Children(func() {
+		ui.Text(c, text).Font(fontText).FontSize(sizeHint).LineHeight(lineHint / sizeHint).TextColor(tone)
 	})
 }
 
@@ -1189,9 +1211,6 @@ func (p *panel) footerRow(c *ui.Context, w float32, now time.Time) {
 			}
 		}
 		ui.Box(c).Grow(1)
-		if p.status != "" && now.Sub(p.statusAt) < statusFor {
-			ui.Text(c, p.status).Key("status").Font(fontText).FontSize(sizeHint).LineHeight(lineHint / sizeHint).TextColor(p.statusTone).NoWrap()
-		}
 		if p.done && p.failed == "" && p.notice == "" {
 			mark, tone := iconCopy, colorSource
 			if since := now.Sub(p.copiedAt); !p.copiedAt.IsZero() && since < 1200*time.Millisecond {

@@ -290,6 +290,7 @@ func footerTester(p *panel, width int) *ui.Tester {
 	tt := ui.NewTester(func(c *ui.Context) {
 		p.spots = p.spots[:0]
 		p.footerRow(c, float32(width), c.Now())
+		p.statusView(c, c.Now(), float32(width), heightFooter)
 		p.tipView(c, c.Now(), float32(width), 200)
 	}, width, 200)
 	tt.Advance(time.Second)
@@ -335,6 +336,41 @@ func TestFooterFitsAtItsNarrowest(t *testing.T) {
 	}
 	if last > widthMinFooter {
 		t.Errorf("ends at %v, past %v", last, widthMinFooter)
+	}
+}
+
+// No message pushes the buttons out of the footer or runs off the panel, even
+// the longest at the footer's narrowest. It was a line in the footer, and took
+// their room.
+func TestStatusLeavesTheFooterAlone(t *testing.T) {
+	const long = "取词程序没有回应，替换结果未知，请检查原文"
+	for _, width := range []int{int(widthMinFooter), 420, int(widthReading)} {
+		p := footerPanel()
+		tt := footerTester(p, width)
+		copyAt, _ := tt.Find("复制")
+		replaceAt, _ := tt.Find("替换")
+
+		p.setStatus(long, colorDanger)
+		p.statusAt = tt.Now()
+		tt.Advance(fadeHover)
+		tt.Frame()
+		if got, _ := tt.Find("复制"); got != copyAt {
+			t.Errorf("at %d the copy button moved from %+v to %+v", width, copyAt, got)
+		}
+		if got, _ := tt.Find("替换"); got != replaceAt {
+			t.Errorf("at %d the replace button moved from %+v to %+v", width, replaceAt, got)
+		}
+		// Whatever runs off a window is measured only up to its edge.
+		at, ok := tt.Find(long)
+		if !ok || at.X < gapBubble || at.X+at.W > float32(width)-gapBubble {
+			t.Errorf("at %d the message is at %+v, ok %v", width, at, ok)
+		}
+
+		tt.Advance(statusFor)
+		tt.Frame()
+		if tt.HasText(long) {
+			t.Errorf("at %d the message stayed", width)
+		}
 	}
 }
 
