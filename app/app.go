@@ -96,8 +96,15 @@ type shell struct {
 	outside    outsidePress
 }
 
+// gcPercent is half Go's default. What a frame allocates is garbage by the
+// next, so the heap grows quickly and holds little that lasts. Collecting
+// sooner leaves less behind when a window closes, at no cost measured to the
+// frames: docs/research/2026-11-06-glo50-memory.md.
+const gcPercent = 50
+
 // Run starts the app and returns when it ends.
 func Run() error {
+	debug.SetGCPercent(gcPercent)
 	if err := registerFonts(); err != nil {
 		return err
 	}

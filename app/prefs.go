@@ -346,8 +346,11 @@ func (p *prefs) view(c *ui.Context) {
 		})
 		// The page is a sheet on the deep ink: its corners keep to the window's,
 		// and the sidebar reads as the desk it lies on.
+		// It does not clip: the page stays clear of its corners on every side, and a
+		// rounded clip around anything that turns or moves, as the keycaps and the
+		// page coming in do, draws a mask of the whole sheet in Go's heap.
 		sheet := ui.Column(c).Grow(1).Shrink(1).Margin(marginSheet, marginSheet, marginSheet, 0).Radius(radiusCard).Background(colorSurface).
-			Border(1, colorRule).InsetShadow(0, 1, 0, 0, colorSheen).Clip()
+			Border(1, colorRule).InsetShadow(0, 1, 0, 0, colorSheen)
 		pad := pagePadding(sheet.Bounds().W)
 		sheet.Children(func() {
 			ui.Box(c).Height(heightSheetDrag).Shrink(0).DragWindow()
