@@ -284,6 +284,26 @@ func (s *Store) SetEnabled(on bool) error {
 	return nil
 }
 
+// SetOptions bounds the store anew. A tighter bound drops what is past it
+// from the file now, as Open would; a looser one keeps what is still
+// there.
+func (s *Store) SetOptions(opts Options) error {
+	if opts.RetentionDays <= 0 {
+		opts.RetentionDays = 90
+	}
+	if opts.MaxRecords <= 0 {
+		opts.MaxRecords = 5000
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tighter := opts.RetentionDays < s.opts.RetentionDays || opts.MaxRecords < s.opts.MaxRecords
+	s.opts = opts
+	if !s.enabled || !tighter {
+		return nil
+	}
+	return s.compact()
+}
+
 // Add records a use. It writes one line; the caller does not wait on it for
 // anything the user sees. It returns how long the write took.
 func (s *Store) Add(r Record) (time.Duration, error) {

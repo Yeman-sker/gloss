@@ -38,7 +38,9 @@ type Snapshot struct {
 	// Similar is this app and this kind of text; App is this app; All is
 	// everywhere.
 	Similar, App, All Preference
-	// Recent are the latest explicit choices anywhere, newest first.
+	// Recent are the latest explicit choices in the same app on the same
+	// kind of text, within recentFor, newest first: a choice made for a
+	// prompt in one app says nothing of a sentence in another.
 	Recent []string
 	// Corrections are the latest switches in this app, newest first.
 	Corrections []Correction
@@ -57,6 +59,10 @@ const (
 )
 
 // Prefer distils the records for a situation, over the enabled features.
+// recentFor is how long an explicit choice stands for the next selection
+// like it, when nothing else decides.
+const recentFor = 2 * time.Hour
+
 func Prefer(records []Record, sit Situation, enabled []string, now time.Time) Snapshot {
 	on := map[string]bool{}
 	for _, id := range enabled {
@@ -82,7 +88,7 @@ func Prefer(records []Record, sit Situation, enabled []string, now time.Time) Sn
 			}
 			t.add(r, w, explicit)
 		}
-		if explicit && len(snap.Recent) < 5 && on[r.Final] {
+		if explicit && len(snap.Recent) < 5 && on[r.Final] && sameApp && r.Shape.Class() == class && age < recentFor {
 			snap.Recent = append(snap.Recent, r.Final)
 		}
 		if sameApp {
@@ -175,7 +181,7 @@ func (s Snapshot) Summary() string {
 		fmt.Fprintf(&b, "%s：%s\n", p.Scope, p.describe())
 	}
 	if len(s.Recent) > 0 {
-		fmt.Fprintf(&b, "最近明确的选择：%s\n", strings.Join(s.Recent, "、"))
+		fmt.Fprintf(&b, "这个应用里同类文字最近明确的选择：%s\n", strings.Join(s.Recent, "、"))
 	}
 	if len(s.Corrections) > 0 {
 		var cs []string

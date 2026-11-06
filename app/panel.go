@@ -72,6 +72,10 @@ type panel struct {
 	blocks      []*block
 	failed      string
 	failedTitle string
+	// fix is where the user can mend what failed, as the settings page of
+	// a key that was refused; fixDo is nil when there is none.
+	fix         string
+	fixDo       func()
 	notice      string
 	noticeAt    time.Time
 	shownAt     time.Time
@@ -119,6 +123,9 @@ type panel struct {
 	replaceable bool
 	md          string
 	mdOpts      markdown.Options
+	// codeCopied is when each code block of the run was copied, by its
+	// index in the document.
+	codeCopied map[int]time.Time
 	// reading is the layout for long or structured results: wider, taller,
 	// the source folded, following the end while it streams.
 	reading    bool
@@ -137,6 +144,7 @@ type panel struct {
 	wantCursor ui.Cursor
 	inCopy     bool
 	retryBox   ui.Rect
+	fixBox     ui.Rect
 	surfaceW   float32
 	textTop    float32
 	local      func() (float32, float32)
@@ -144,9 +152,11 @@ type panel struct {
 	copied     func(*ui.Context, string)
 	copyText   func() string
 	retry      func()
-	switchTo   func(id string)
-	replace    func()
-	frame      func(c *ui.Context, curW, curH, wantW, wantH float32, pressed, overText bool)
+	// explain words an error for the user, and says where to fix it.
+	explain  func(error) (msg, fix string, do func())
+	switchTo func(id string)
+	replace  func()
+	frame    func(c *ui.Context, curW, curH, wantW, wantH float32, pressed, overText bool)
 }
 
 // reset starts the panel over for a new selection.
@@ -169,6 +179,8 @@ func (p *panel) reset(source string) {
 // clearRun empties what a run showed.
 func (p *panel) clearRun() {
 	p.blocks, p.failed, p.md = nil, "", ""
+	p.fix, p.fixDo, p.fixBox = "", nil, ui.Rect{}
+	p.codeCopied = nil
 	p.netDone, p.done = false, false
 	p.doneAt, p.copiedAt = time.Time{}, time.Time{}
 	p.releasing = 0
@@ -240,6 +252,9 @@ func (p *panel) apply(ev core.Event) {
 		}
 	case core.EventError:
 		p.failed = ev.Err.Error()
+		if p.explain != nil {
+			p.failed, p.fix, p.fixDo = p.explain(ev.Err)
+		}
 		p.capsule, p.done, p.netDone = false, true, true
 		p.openedAt = time.Now()
 	}
@@ -816,9 +831,10 @@ func (p *panel) pointerAt(x, y float32) ui.Cursor {
 	case p.pinned && x >= p.surfaceW-24 && y < 24:
 		return ui.CursorPointer
 	case p.failed != "":
-		b := p.retryBox
-		if b.W > 0 && b.Contains(x+margin, y+margin) {
-			return ui.CursorPointer
+		for _, b := range []ui.Rect{p.retryBox, p.fixBox} {
+			if b.W > 0 && b.Contains(x+margin, y+margin) {
+				return ui.CursorPointer
+			}
 		}
 		return ui.CursorGrab
 	case !p.inCopy:
@@ -865,13 +881,26 @@ func (p *panel) failure(c *ui.Context) {
 		ui.Text(c, title).Font(fontSource).FontSize(sizeSource).LineHeight(lineSource / sizeSource).TextColor(colorDanger)
 		ui.Text(c, p.failed).Font(fontSource).FontSize(sizeSource).LineHeight(lineSource / sizeSource).TextColor(colorSource).Selectable()
 	})
-	retry := ui.Box(c).Key("retry").Height(24).Padding(0, 10).Radius(radiusControl).Background(colorDanger.Alpha(0.18)).AlignSelf(ui.Start).Cursor(p.wantCursor).Children(func() {
-		ui.Text(c, "重试").Font(fontSource).FontSize(sizeSource).LineHeight(2).TextColor(colorText)
+	ui.Row(c).Gap(8).AlignSelf(ui.Start).Children(func() {
+		retry := ui.Box(c).Key("retry").Height(24).Padding(0, 10).Radius(radiusControl).Background(colorDanger.Alpha(0.18)).Cursor(p.wantCursor).Children(func() {
+			ui.Text(c, "重试").Font(fontSource).FontSize(sizeSource).LineHeight(2).TextColor(colorText)
+		})
+		p.retryBox = retry.Bounds()
+		if retry.Clicked() && p.retry != nil {
+			p.retry()
+		}
+		if p.fixDo == nil {
+			p.fixBox = ui.Rect{}
+			return
+		}
+		fix := ui.Box(c).Key("fix").Height(24).Padding(0, 10).Radius(radiusControl).Background(colorControl).Cursor(p.wantCursor).Children(func() {
+			ui.Text(c, p.fix).Font(fontSource).FontSize(sizeSource).LineHeight(2).TextColor(colorText)
+		})
+		p.fixBox = fix.Bounds()
+		if fix.Clicked() {
+			p.fixDo()
+		}
 	})
-	p.retryBox = retry.Bounds()
-	if retry.Clicked() && p.retry != nil {
-		p.retry()
-	}
 }
 
 // corner is the quiet copy cue, and the check that answers a copy.
@@ -990,6 +1019,7 @@ func (p *panel) markdownView(c *ui.Context) ui.Element {
 	if p.mdOpts.Theme == nil {
 		p.mdOpts.Theme = mdTheme()
 		p.mdOpts.WrapCode = true
+		p.mdOpts.CodeBlock = p.codeBlock
 	}
 	var el ui.Element
 	box := ui.Column(c).Key(fmt.Sprintf("md-%d", p.run)).Cursor(p.wantCursor)
@@ -1002,6 +1032,43 @@ func (p *panel) markdownView(c *ui.Context) ui.Element {
 	})
 	_ = el
 	return box
+}
+
+// codeBlock is a code block in the panel's words and icons: its language,
+// and a copy button that waits for the block to close.
+func (p *panel) codeBlock(c *ui.Context, b *markdown.CodeBlockView) {
+	box := ui.Column(c).Background(ui.RGBA(255, 255, 255, 0.04)).Border(1, colorRim).Radius(radiusControl).AlignSelf(ui.Stretch).Clip()
+	box.Children(func() {
+		ui.Row(c).AlignItems(ui.Center).Padding(4, 6, 0, 12).Children(func() {
+			ui.Text(c, b.Language).Font(fontSource).FontSize(sizeHint).TextColor(colorHint).Unselectable()
+			ui.Spacer(c)
+			at := p.codeCopied[b.Index]
+			copied := !at.IsZero() && c.Now().Sub(at) < 2*time.Second
+			btn := ui.Row(c).Height(22).Padding(0, 8).Gap(4).Radius(radiusControl).AlignItems(ui.Center).Cursor(ui.CursorPointer).Label("复制代码")
+			if b.Open {
+				btn.Opacity(0.4)
+			} else if btn.Hovered() {
+				btn.Background(colorControl)
+			}
+			icon, label, col := iconCopy, "复制", colorHint
+			if copied {
+				icon, label, col = iconCheck, "已复制", colorSuccess
+			}
+			btn.Children(func() {
+				ui.Icon(c, icon).Size(13, 13).TextColor(col)
+				ui.Text(c, label).Font(fontText).FontSize(sizeHint).TextColor(col).NoWrap()
+			})
+			if btn.Clicked() && !b.Open {
+				c.WriteClipboard(b.Code())
+				if p.codeCopied == nil {
+					p.codeCopied = map[int]time.Time{}
+				}
+				p.codeCopied[b.Index] = c.Now()
+				c.After(2 * time.Second)
+			}
+		})
+		b.Body(c)
+	})
 }
 
 // byLabel says how the feature showing was chosen.

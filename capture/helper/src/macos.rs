@@ -22,6 +22,8 @@ struct CFRange {
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     fn AXIsProcessTrusted() -> bool;
+    fn AXIsProcessTrustedWithOptions(options: CFRef) -> bool;
+    static kAXTrustedCheckOptionPrompt: CFRef;
     fn AXUIElementCreateSystemWide() -> CFRef;
     fn AXUIElementCreateApplication(pid: i32) -> CFRef;
     fn AXUIElementCopyAttributeValue(el: CFRef, attr: CFRef, out: *mut CFRef) -> i32;
@@ -54,6 +56,16 @@ extern "C" {
     fn CFArrayGetCount(a: CFRef) -> isize;
     fn CFArrayGetValueAtIndex(a: CFRef, i: isize) -> CFRef;
     fn CFDictionaryGetValue(d: CFRef, key: CFRef) -> CFRef;
+    fn CFDictionaryCreate(
+        a: CFRef,
+        keys: *const CFRef,
+        values: *const CFRef,
+        n: isize,
+        key_callbacks: *const c_void,
+        value_callbacks: *const c_void,
+    ) -> CFRef;
+    static kCFTypeDictionaryKeyCallBacks: c_void;
+    static kCFTypeDictionaryValueCallBacks: c_void;
     fn CFEqual(a: CFRef, b: CFRef) -> bool;
     fn CFRetain(r: CFRef) -> CFRef;
     fn CFRelease(r: CFRef);
@@ -97,6 +109,29 @@ pub fn button_down() -> bool {
 
 pub fn trusted() -> bool {
     unsafe { AXIsProcessTrusted() }
+}
+
+/// trusted_prompt is trusted, and when it is not, asks macOS to show its
+/// prompt, which puts the app in the Accessibility list for the user to
+/// turn on: they need not find it with the + button.
+pub fn trusted_prompt() -> bool {
+    unsafe {
+        let keys = [kAXTrustedCheckOptionPrompt];
+        let values = [kCFBooleanTrue];
+        let opts = CFDictionaryCreate(
+            std::ptr::null(),
+            keys.as_ptr(),
+            values.as_ptr(),
+            1,
+            &kCFTypeDictionaryKeyCallBacks,
+            &kCFTypeDictionaryValueCallBacks,
+        );
+        let ok = AXIsProcessTrustedWithOptions(opts);
+        if !opts.is_null() {
+            CFRelease(opts);
+        }
+        ok
+    }
 }
 
 /// An owned Core Foundation object, released when dropped.

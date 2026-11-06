@@ -6,6 +6,6 @@
   "replaceable": true,
   "order": 3,
   "settings": [
-    {"key": "length", "type": "choice", "default": "相当", "options": ["更精简", "相当", "更完整"], "help": "改写后的篇幅和原文相比"}
+    {"key": "length", "label": "篇幅", "type": "choice", "default": "相当", "options": ["更精简", "相当", "更完整"], "help": "改写后的篇幅和原文相比"}
   ]
 }

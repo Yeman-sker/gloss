@@ -123,6 +123,24 @@ func Path(app string) (string, error) {
 	return filepath.Join(dir, app, File), nil
 }
 
+// ErrNoService is a config that names no model service to run on.
+var ErrNoService = errors.New("还没有设置模型服务")
+
+// MissingError is a model service that lacks what a run needs. Its
+// message names the fields as the settings window does.
+type MissingError struct {
+	Service string
+	Fields  []string
+}
+
+func (e *MissingError) Error() string {
+	return fmt.Sprintf("模型服务“%s”还没有填写%s", e.Service, strings.Join(e.Fields, "和"))
+}
+
+// ErrInvalid is a config file that cannot be used as it is: every error
+// of Read but ErrMissing wraps it.
+var ErrInvalid = errors.New("配置文件有误")
+
 // ErrMissing is a file that does not exist.
 var ErrMissing = errors.New("缺少配置文件")
 
@@ -154,19 +172,26 @@ func Read(path string, actions []core.Descriptor) (*Config, error) {
 		return c, fmt.Errorf("%w %s，请创建它并填写模型服务", ErrMissing, path)
 	}
 	if err != nil {
-		return c, fmt.Errorf("无法读取配置文件 %s：%w", path, err)
+		return c, fmt.Errorf("%w：无法读取配置文件 %s：%v", ErrInvalid, path, err)
 	}
 	restrict(path)
+	return parse(path, raw, actions)
+}
+
+// parse checks raw as the file at path. On error it returns the defaults
+// with the error.
+func parse(path string, raw []byte, actions []core.Descriptor) (*Config, error) {
+	c := Defaults(path, actions)
 	// Some Windows editors start UTF-8 files with a BOM, which JSON rejects.
 	raw = bytes.TrimPrefix(raw, []byte("\xef\xbb\xbf"))
 	var f file
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&f); err != nil {
-		return c, fmt.Errorf("配置文件 %s %s", path, describeJSONError(raw, err))
+		return c, invalid(fmt.Errorf("配置文件 %s %s", path, describeJSONError(raw, err)))
 	}
 	if err := c.apply(&f, actions); err != nil {
-		return c, fmt.Errorf("配置文件 %s 中 %w", path, err)
+		return Defaults(path, actions), invalid(fmt.Errorf("配置文件 %s 中 %w", path, err))
 	}
 	return c, nil
 }
@@ -181,6 +206,14 @@ func restrict(path string) {
 		_ = os.Chmod(path, fi.Mode().Perm()&0o700)
 	}
 }
+
+// invalidError is an error of the file, which says what is wrong in the
+// file's words and is ErrInvalid to errors.Is.
+type invalidError struct{ error }
+
+func (e invalidError) Is(target error) bool { return target == ErrInvalid }
+
+func invalid(err error) error { return invalidError{err} }
 
 func describeJSONError(raw []byte, err error) string {
 	var syn *json.SyntaxError
@@ -449,7 +482,7 @@ func (c *Config) Service(actionID string) (Service, error) {
 		name = c.DefaultService
 	}
 	if name == "" {
-		return Service{}, fmt.Errorf("配置文件 %s 缺少 services，或没有指定 default_service", c.Path)
+		return Service{}, ErrNoService
 	}
 	s := c.Services[name]
 	if ac.model != "" {
@@ -457,17 +490,13 @@ func (c *Config) Service(actionID string) (Service, error) {
 	}
 	var missing []string
 	if s.APIKey == "" {
-		missing = append(missing, "api_key")
+		missing = append(missing, "API Key")
 	}
 	if s.Model == "" {
-		missing = append(missing, "model")
+		missing = append(missing, "模型")
 	}
 	if len(missing) > 0 {
-		where := "services." + name
-		if c.Migrated {
-			where = "顶层"
-		}
-		return Service{}, fmt.Errorf("配置文件 %s 的 %s 缺少 %s", c.Path, where, strings.Join(missing, " 和 "))
+		return Service{}, &MissingError{Service: name, Fields: missing}
 	}
 	return s, nil
 }

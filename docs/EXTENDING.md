@@ -18,7 +18,7 @@
 
 ```text
 providers/prompt/specs/<ID>/
-  spec.json   ID、名字、用途、输出类型、能否替换、顺序、设置项
+  spec.json   ID、名字、用途、输出类型、能否替换、顺序、设置项（每项写 label，设置窗口用它做标题）
   system.md   系统提示词
   user.md     用户消息模板
 ```

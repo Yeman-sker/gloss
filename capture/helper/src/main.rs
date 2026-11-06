@@ -3,6 +3,7 @@
 //! request's id so that the client can drop a late answer:
 //!
 //!   {"id":1,"cmd":"check"}                  {"id":1,"trusted":bool}
+//!   {"id":1,"cmd":"check","prompt":true}    the same, and macOS's prompt when not
 //!   {"id":2,"cmd":"button"}                 {"id":2,"down":bool}
 //!   {"id":3,"cmd":"selection","copy":true}  {"id":3,"ok":true,"text":..,"method":"ax"|"copy","us":..,
 //!                                            "app":..,"title":..,"editable":"yes"|"no"|"unknown",
@@ -85,7 +86,10 @@ fn handle(state: &mut platform::State, line: &str) -> String {
         _ => 0,
     };
     match cmd.as_str() {
-        "check" => format!("{{\"id\":{id},\"trusted\":{}}}", platform::trusted()),
+        "check" => {
+            let ok = if flag("prompt") { platform::trusted_prompt() } else { platform::trusted() };
+            format!("{{\"id\":{id},\"trusted\":{ok}}}")
+        }
         "button" => format!("{{\"id\":{id},\"down\":{}}}", platform::button_down()),
         "selection" => match platform::selection(state, flag("copy"), flag("copy_only")) {
             Ok(s) => format!(

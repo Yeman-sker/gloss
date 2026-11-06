@@ -104,7 +104,10 @@ const (
 // as strings in their canonical form: "true" or "false", a decimal number,
 // one of Options, or any text.
 type Setting struct {
-	Key     string
+	Key string
+	// Label names the setting where the host shows it, as "目标语言";
+	// the host falls back to Key without one.
+	Label   string
 	Type    SettingType
 	Default string
 	Options []string // the values of a choice

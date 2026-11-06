@@ -165,7 +165,7 @@ func TestErrors(t *testing.T) {
 		want   string
 		out    string
 	}{
-		{name: "api message", status: 401, lines: []string{`{"error":{"message":"bad key"}}`}, want: "HTTP 401：bad key"},
+		{name: "api message", status: 401, lines: []string{`{"error":{"message":"bad key"}}`}, want: "Key 无效或没有权限（HTTP 401）：bad key"},
 		{name: "html body", status: 502, lines: []string{"<html>Bad Gateway</html>"}, want: "HTTP 502"},
 		{name: "error in stream", status: 200, lines: []string{delta("你"), `data: {"error":{"message":"overloaded"}}`}, want: "overloaded", out: "你"},
 		{name: "bad json", status: 200, lines: []string{"data: {"}, want: "无法解析"},

@@ -6,6 +6,6 @@
   "replaceable": false,
   "order": 1,
   "settings": [
-    {"key": "target_lang", "type": "text", "default": "", "help": "译成哪种语言，留空时用产品设置的默认目标语言"}
+    {"key": "target_lang", "label": "目标语言", "type": "text", "default": "", "help": "译成哪种语言，留空时用产品设置的默认目标语言"}
   ]
 }

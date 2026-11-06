@@ -48,7 +48,7 @@ Issue 来自讨论。未经用户同意，不要创建 issue 或调整规划；�
 make check   # 完成改动前必须通过：格式、vet、测试、helper 构建
 make test    # 只跑测试
 make run     # 构建并运行，默认快捷键 Option/Alt+Shift+D
-make app     # 打包 gloss.app（登录时启动需要它）
+make app     # 打包 Gloss.app（登录时启动需要它）
 ```
 
 更多见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)。

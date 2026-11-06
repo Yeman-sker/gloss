@@ -356,3 +356,47 @@ func mustRecords(t *testing.T, dir string) []Record {
 	}
 	return rs
 }
+
+func TestTighterOptionsTrimTheFile(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir, Options{RetentionDays: 90, MaxRecords: 100}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		if _, err := s.Add(Record{Session: string(rune('a' + i)), Time: time.Now().UTC()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.SetOptions(Options{RetentionDays: 90, MaxRecords: 2}); err != nil {
+		t.Fatal(err)
+	}
+	all, err := Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 || len(s.Records()) != 2 {
+		t.Errorf("kept %d on disk, %d in memory; want 2", len(all), len(s.Records()))
+	}
+}
+
+// A choice made in one place stands only for selections like it, there,
+// and only for a while: never for every selection the rules cannot place.
+func TestRecentChoiceStaysWhereItWasMade(t *testing.T) {
+	sentence := ShapeOf("a short sentence to read")
+	chose := rec("1", claude, "translate", "prompt", 10*time.Minute, func(r *Record) { r.Shape = sentence })
+	recs := []Record{chose}
+	if got := Prefer(recs, Situation{App: claude, Shape: sentence}, enabled, now).Recent; len(got) != 1 || got[0] != "prompt" {
+		t.Errorf("same app and kind: %v", got)
+	}
+	if got := Prefer(recs, Situation{App: "com.apple.Safari", Shape: sentence}, enabled, now).Recent; len(got) != 0 {
+		t.Errorf("another app: %v", got)
+	}
+	if got := Prefer(recs, Situation{App: claude, Shape: ShapeOf("word")}, enabled, now).Recent; len(got) != 0 {
+		t.Errorf("another kind of text: %v", got)
+	}
+	old := rec("2", claude, "translate", "prompt", 3*time.Hour, func(r *Record) { r.Shape = sentence })
+	if got := Prefer([]Record{old}, Situation{App: claude, Shape: sentence}, enabled, now).Recent; len(got) != 0 {
+		t.Errorf("an old choice: %v", got)
+	}
+}

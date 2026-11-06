@@ -11,6 +11,7 @@ import (
 
 	"github.com/egoist/mygo"
 
+	"gloss/memory"
 	"gloss/settings"
 )
 
@@ -101,15 +102,27 @@ func (s *shell) reload() {
 	if s.autoItem != nil {
 		s.autoItem.SetChecked(cfg.Routing.Enabled)
 		s.memItem.SetChecked(cfg.Memory.Enabled)
-		s.loginItem.SetChecked(cfg.LaunchAtLogin)
 	}
-	if s.store != nil && s.store.Enabled() != cfg.Memory.Enabled {
-		if err := s.store.SetEnabled(cfg.Memory.Enabled); err != nil {
+	if s.store != nil {
+		// The new bounds first: turning memory on loads the file, and would
+		// trim it by the old ones, for good.
+		if err := s.store.SetOptions(memory.Options{RetentionDays: cfg.Memory.RetentionDays, MaxRecords: cfg.Memory.MaxRecords}); err != nil {
 			log.Printf("memory: %v", err)
+		}
+		if s.store.Enabled() != cfg.Memory.Enabled {
+			if err := s.store.SetEnabled(cfg.Memory.Enabled); err != nil {
+				log.Printf("memory: %v", err)
+			}
 		}
 	}
 	if before.LaunchAtLogin != cfg.LaunchAtLogin {
 		s.applyLogin(cfg.LaunchAtLogin)
+	}
+	if s.prefs != nil {
+		s.prefs.sync()
+		if s.prefs.win != nil { // nil in tests
+			s.prefs.win.Invalidate()
+		}
 	}
 }
 

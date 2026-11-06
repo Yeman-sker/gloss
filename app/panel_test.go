@@ -224,3 +224,27 @@ func TestCandidatesFollowTheConfig(t *testing.T) {
 		t.Errorf("with none on: %v", got)
 	}
 }
+
+func TestPanelFailureOffersTheFix(t *testing.T) {
+	var p panel
+	fixed := false
+	p.explain = func(err error) (string, string, func()) {
+		return "还没有设置模型服务", "设置模型服务", func() { fixed = true }
+	}
+	p.reset("hello")
+	p.apply(core.Event{Run: 1, Type: core.EventError, Err: errors.New("raw")})
+	if p.failed != "还没有设置模型服务" {
+		t.Fatalf("failed = %q", p.failed)
+	}
+	tt := ui.NewTester(p.failure, 420, 120)
+	if err := tt.Click("设置模型服务"); err != nil {
+		t.Fatalf("%v: %q", err, tt.Texts())
+	}
+	if !fixed {
+		t.Error("the fix did not run")
+	}
+	p.reset("again")
+	if p.fixDo != nil {
+		t.Error("the fix outlived its run")
+	}
+}

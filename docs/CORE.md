@@ -44,7 +44,7 @@ Action 可以再实现 `Describer`，返回 `Descriptor`，见[决策 0007](deci
 | `Purpose` | 一句用途描述，路由用它 |
 | `Output` | 主结果（index 0）的类型，`text` 或 `markdown`，整个执行中不变 |
 | `Replaceable` | 结果适合替换原文。能否安全写回由宿主在运行时判断 |
-| `Settings` | 设置项：键、类型（`text`、`bool`、`choice`、`number`）、默认值、选项、说明 |
+| `Settings` | 设置项：键、界面上的名称（`Label`，见[决策 0010](decisions/0010-setting-label.md)）、类型（`text`、`bool`、`choice`、`number`）、默认值、选项、说明 |
 
 没实现 `Describer` 的 Action 由 `core.Describe` 补上默认值：输出 `text`，不可替换，没有设置。
 

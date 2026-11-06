@@ -1,6 +1,12 @@
 {
-  "name": "gloss",
+  "name": "Gloss",
   "identifier": "dev.gloss.app",
   "version": "0.1.0",
-  "out": "build"
+  "out": "build",
+  "copyright": "© 2026 Gloss",
+  "macos": {
+    "infoPlist": {
+      "LSUIElement": true
+    }
+  }
 }

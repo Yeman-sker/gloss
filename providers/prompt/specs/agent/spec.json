@@ -6,6 +6,6 @@
   "replaceable": false,
   "order": 4,
   "settings": [
-    {"key": "tone", "type": "choice", "default": "轻松", "options": ["轻松", "克制"], "help": "语气"}
+    {"key": "tone", "label": "语气", "type": "choice", "default": "轻松", "options": ["轻松", "克制"], "help": "总结用的语气"}
   ]
 }

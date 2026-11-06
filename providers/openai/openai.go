@@ -27,6 +27,38 @@ const (
 
 var errStalled = errors.New("模型服务长时间没有响应")
 
+// ErrUnreachable is a service that could not be reached at all: a wrong
+// address, no network, or a proxy in the way.
+var ErrUnreachable = errors.New("无法连接模型服务")
+
+// StatusError is a service that answered with an HTTP error.
+type StatusError struct {
+	Code int
+	// Message is the service's own, with any key taken out.
+	Message string
+}
+
+func (e *StatusError) Error() string {
+	var why string
+	switch {
+	case e.Code == 401 || e.Code == 403:
+		why = "Key 无效或没有权限"
+	case e.Code == 404:
+		why = "接口地址或模型名不对"
+	case e.Code == 429:
+		why = "请求太频繁，或额度已用完"
+	case e.Code >= 500:
+		why = "模型服务暂时出错"
+	default:
+		why = "模型服务拒绝了请求"
+	}
+	msg := fmt.Sprintf("%s（HTTP %d）", why, e.Code)
+	if e.Message != "" {
+		msg += "：" + e.Message
+	}
+	return msg
+}
+
 // Client is one model of one service.
 type Client struct {
 	BaseURL string // up to and including the version, like https://api.openai.com/v1
@@ -78,7 +110,7 @@ func (a Client) Stream(ctx context.Context, msgs []Message, delta func(string)) 
 
 	resp, err := http.DefaultClient.Do(httpReq)
 	if err != nil {
-		return failure(runCtx, fmt.Errorf("无法连接模型服务：%w", err))
+		return failure(runCtx, fmt.Errorf("%w：%v", ErrUnreachable, err))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -149,10 +181,11 @@ func statusError(resp *http.Response, key string) error {
 		Error *apiError `json:"error"`
 	}
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrBody))
+	e := &StatusError{Code: resp.StatusCode}
 	if json.Unmarshal(raw, &body) == nil && body.Error != nil && body.Error.Message != "" {
-		return fmt.Errorf("模型服务返回 HTTP %d：%s", resp.StatusCode, redact(body.Error.Message, key))
+		e.Message = redact(body.Error.Message, key)
 	}
-	return fmt.Errorf("模型服务返回 HTTP %d", resp.StatusCode)
+	return e
 }
 
 // keyLike is what services echo of a key, masked or not, as OpenAI's 401

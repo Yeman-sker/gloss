@@ -13,12 +13,15 @@ import (
 //go:embed fonts/*.ttf
 var fonts embed.FS
 
-// registerFonts adds the bundled faces under the names of tokens.go.
+// registerFonts adds the bundled faces under the names of tokens.go. A
+// bold face shares its family's name, so that strong text finds it.
 func registerFonts() error {
 	for file, family := range map[string]string{
 		"cjk.ttf":        "Gloss CJK",
+		"cjk-bold.ttf":   "Gloss CJK",
 		"cjk-quotes.ttf": "Gloss Quotes",
 		"geist.ttf":      "Gloss Sans",
+		"geist-bold.ttf": "Gloss Sans",
 		"geist-mono.ttf": "Gloss Mono",
 		"phonetic.ttf":   "Gloss Phonetic",
 	} {

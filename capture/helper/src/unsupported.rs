@@ -25,6 +25,10 @@ pub fn trusted() -> bool {
     false
 }
 
+pub fn trusted_prompt() -> bool {
+    false
+}
+
 pub fn button_down() -> bool {
     false
 }

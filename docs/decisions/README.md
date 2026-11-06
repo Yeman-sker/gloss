@@ -11,3 +11,4 @@
 | [0007](0007-action-descriptor.md) | Action 描述、主结果和设置声明的最小契约 | 已接受，已接入 `core/` |
 | [0008](0008-two-layer-settings.md) | 设置分两层，Key 放在 0600 的配置文件里 | 已接受，已接入 `settings/` |
 | [0009](0009-memory-and-routing.md) | 记忆与自动路由的分层、存储和统计口径 | 已接受，已接入 `memory/`、`routing/` |
+| [0010](0010-setting-label.md) | 设置声明增加 Label，界面用它做标题 | 已接受，已接入 `core/` |

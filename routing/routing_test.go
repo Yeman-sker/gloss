@@ -157,8 +157,8 @@ func TestJev(t *testing.T) {
 		"rules first":  {&fakeJudge{v: Verdict{Choice: "agent", Confidence: 1}}, clearCase, "translate", memory.ByRule, 0},
 		"taken":        {&fakeJudge{v: Verdict{Choice: "prompt", Confidence: 0.9}}, amb, "prompt", memory.ByJev, 1},
 		"unsure":       {&fakeJudge{v: Verdict{Choice: "prompt", Confidence: 0.3}}, amb, "translate", memory.ByDefault, 1},
-		"not a choice": {&fakeJudge{v: Verdict{Choice: "dance", Confidence: 1}}, amb, "translate", memory.ByDefault, 1},
-		"fails":        {&fakeJudge{err: errors.New("offline")}, amb, "translate", memory.ByDefault, 1},
+		"not a choice": {&fakeJudge{v: Verdict{Choice: "明天下午三点开会", Confidence: 1}}, amb, "translate", memory.ByDefault, 1},
+		"fails":        {&fakeJudge{err: errors.New("401: 明天下午三点开会")}, amb, "translate", memory.ByDefault, 1},
 		"slow":         {&fakeJudge{v: Verdict{Choice: "prompt", Confidence: 1}, delay: time.Second}, amb, "translate", memory.ByDefault, 1},
 	} {
 		start := time.Now()
@@ -171,6 +171,9 @@ func TestJev(t *testing.T) {
 		}
 		if tt.by == memory.ByDefault && d.JevError == "" {
 			t.Errorf("%s: no reason for leaving Jev out", name)
+		}
+		if strings.Contains(d.JevError, "三点") {
+			t.Errorf("%s: the reason quotes the text: %q", name, d.JevError)
 		}
 	}
 }

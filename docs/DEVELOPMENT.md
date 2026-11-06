@@ -14,7 +14,7 @@
 | `make test` | Go 和 Rust 测试 |
 | `make build` | 构建到 `bin/` |
 | `make run` | 构建并运行 |
-| `make app` | 打包 `build/darwin-arm64/gloss.app`，helper 放进 `Contents/Resources`。“登录时启动”需要从 .app 运行 |
+| `make app` | 打包 `build/darwin-arm64/Gloss.app`，helper 放进 `Contents/Resources`。“登录时启动”需要从 .app 运行 |
 | `go run . stats [天数]` | 记忆里的路由统计（改正率、已确认准确率、未知比例、回退率、耗时） |
 | `go run . recent [条数]`、`go run . label <会话> right\|wrong` | 查看最近的会话（不含文本），给会话标注对错 |
 | `go run ./cmd/smoke` | 用配置里的真实服务测各功能的首字和总耗时，以及错误 Key、连不上时的提示 |
@@ -26,7 +26,7 @@
 
 ## 配置
 
-手动编辑用户配置目录下的 `Gloss/config.json`，不要放进仓库。托盘 › 打开配置文件会在文件不存在时生成模板。改完不用重启：程序每 2 秒检查一次，功能每次运行时读取最新的服务配置。设计见[决策 0008](decisions/0008-two-layer-settings.md)。
+平时在设置窗口（托盘 › 设置…，或再次打开 Gloss）里改：每项改动先按下面的规则完整校验，通过后才以 0600 权限原子写入，不合法的改动不会写坏文件，错误显示在对应的那一项下面。也可以手动编辑用户配置目录下的 `Gloss/config.json`，不要放进仓库；设置 › 通用 › 配置文件 › 在编辑器中打开，会在文件不存在时生成模板。改完不用重启：程序每 2 秒检查一次，功能每次运行时读取最新的服务配置。设计见[决策 0008](decisions/0008-two-layer-settings.md)。
 
 | 平台 | 路径 |
 |---|---|
@@ -60,7 +60,7 @@
 | `services` | 模型服务。`api_key` 和 `model` 必填，缺少时面板会说明是哪个服务缺什么。`base_url` 写到版本号为止，默认 `https://api.openai.com/v1`。不内置默认模型 |
 | `default_service` | 功能没指定服务时用哪个。只有一个服务时可以省略 |
 | `shortcut` | 全局快捷键，默认 `Alt+Shift+D` |
-| `memory` | 是否记录使用、保留天数、最多条数。托盘可以关闭和清空 |
+| `memory` | 是否记录使用、保留天数、最多条数。托盘可以开关，设置里可以清空 |
 | `routing` | 是否自动选择功能；`jev_service` 为空时只用规则和记忆；`wait_ms` 是等 Jev 的上限；`min_confidence` 是采用 Jev 结果的最低把握；`send_window_title` 是否把窗口标题发给 Jev |
 | `actions` | 启用哪些功能及顺序，第一个是默认功能 |
 | `action_settings.<ID>` | 该功能声明的设置项，以及 `service`、`model`。不能在这里写 Key |
@@ -68,6 +68,10 @@
 旧格式（顶层的 `api_key`、`base_url`、`model`、`target_lang`）仍然可用，会当作名为 `main` 的服务。
 
 拼错字段名、类型不对、值不在选项里都会报错，错误信息写明行列和字段，但不会引用值。文件是明文 Key，程序读取时会把权限设为 600。
+
+## 诊断日志
+
+macOS 上在 `~/Library/Logs/Gloss/gloss.log`（权限 0600），满 1 MB 时轮换，只留一个旧文件 `gloss.log.1`。日志只记事件、耗时、错误类别和来源应用，不记选中的文字、结果、窗口标题和 Key（`app/logfile.go` 的 `errKind`）。设置 › 通用 › 诊断日志 › 显示日志。
 
 ## 规划（Linear）
 

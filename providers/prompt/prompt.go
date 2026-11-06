@@ -53,6 +53,7 @@ type specFile struct {
 
 type setting struct {
 	Key     string   `json:"key"`
+	Label   string   `json:"label"`
 	Type    string   `json:"type"`
 	Default string   `json:"default"`
 	Options []string `json:"options"`
@@ -118,7 +119,7 @@ func loadOne(fsys fs.FS, dir string) (Spec, int, error) {
 	}
 	for _, st := range f.Settings {
 		s.Settings = append(s.Settings, core.Setting{
-			Key: st.Key, Type: core.SettingType(st.Type), Default: st.Default, Options: st.Options, Help: st.Help,
+			Key: st.Key, Label: st.Label, Type: core.SettingType(st.Type), Default: st.Default, Options: st.Options, Help: st.Help,
 		})
 	}
 	return s, f.Order, s.compile()

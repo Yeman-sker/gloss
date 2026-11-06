@@ -1,6 +1,6 @@
 # macOS 本地实测：场景清单与进入条件（GLO-22、GLO-7）
 
-**日期：** 2026-11-05 **作者：** Claude Code **状态：** 清单已写，实测未开始
+**日期：** 2026-11-05 **作者：** Claude Code **状态：** 清单已写，实测未开始（2026-11-06 按 0.1.0 更新了准备步骤）
 
 ## 进入实测的条件
 
@@ -11,13 +11,13 @@
 | 真实服务验证（GLO-7） | 未做：本机没有 Key。负责人填好配置后运行 `go run ./cmd/smoke -n 3` |
 | 记忆、路由、改正闭环 | 代码完成，本地用模拟服务跑通 |
 | 替换原文 | helper 层在 TextEdit 实测通过；面板里的端到端替换没能在正常条件下复测 |
-| 打包运行 | `make app` 生成 `build/darwin-arm64/gloss.app`，helper 在 `Contents/Resources`；未从 .app 实际运行 |
+| 打包运行 | `make app` 生成 `build/darwin-arm64/Gloss.app`，helper 在 `Contents/Resources`；2026-11-06 已从 .app 运行（欢迎引导、单实例、日志） |
 
 ## 准备
 
-1. `make app`，把 `gloss.app` 拖进“应用程序”，首次运行时在“系统设置 › 隐私与安全性 › 辅助功能”里允许它。
-2. 托盘 › 打开配置文件，填 `services.main.api_key` 和 `model`。要试 Jev 时按 [Jev 调研](2026-11-05-jev.md) 加一个服务。
-3. 托盘 › 登录时启动（需要从 .app 运行）。
+1. `make app`，把 `build/darwin-arm64/Gloss.app` 拖进“应用程序”并打开。第一次打开会显示欢迎引导：点“打开系统设置”，在“辅助功能”里允许 Gloss。本机构建的副本可以直接打开；从别的电脑拷来的没有签名，可能被 Gatekeeper 拦下（未测），那时右键 › 打开。
+2. 在引导或设置 › 模型服务里填接口地址、Key 和模型，点“测试连接”。要试 Jev 时按 [Jev 调研](2026-11-05-jev.md) 再加一个服务，在设置 › 记忆与路由里选它。
+3. 设置 › 通用 › 登录时启动。
 4. `go run ./cmd/smoke -n 3` 记录真实服务的首字和总耗时（GLO-7），结果补到本文。
 
 ## 每天结束时
@@ -46,5 +46,6 @@ go run . label <会话> right|wrong   # 给没改正但其实选错（或确实�
 
 - 取词：Claude 桌面端多段选择（GLO-9）、终端、Electron 应用；剪贴板是否被弄丢。
 - 面板：160Hz 屏上的手感（GLO-10）。用 `GLOSS_FRAMELOG=1 ./bin/gloss` 运行，日志会记下动画期间超过 25ms 的帧间隔。
+- 出问题时看诊断日志：`~/Library/Logs/Gloss/gloss.log`（设置 › 通用 › 显示日志），不含选中的文字和 Key。
 - 路由：哪些情况经常改正；“最近一次选择”的回退是否太强。
-- 内存：`footprint -p $(pgrep -x gloss)`，基线 46MB（2026-11-05，模拟服务跑完四个功能后）。
+- 内存：`footprint -p $(pgrep -x Gloss)`。基线：空闲 37–40 MB，打开设置 50–57 MB，模拟服务跑完四个功能后 46 MB（见[内存](2026-11-06-memory.md)）。

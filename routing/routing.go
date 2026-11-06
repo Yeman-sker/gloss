@@ -8,6 +8,7 @@ package routing
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -41,7 +42,8 @@ type Decision struct {
 	// Scores are the rules' scores, or Jev's probabilities when Jev chose.
 	Scores  map[string]float64
 	Elapsed time.Duration
-	// JevError says why Jev was asked and not used, when it was.
+	// JevError says why Jev was asked and not used, when it was: a kind,
+	// never what Jev or its service returned, which may quote the text.
 	JevError string
 }
 
@@ -117,10 +119,13 @@ func (r Router) route(ctx context.Context, in Input) Decision {
 		v, err := r.Judge.Judge(jctx, in)
 		cancel()
 		switch {
+		// Kinds only: what Jev or its service says may echo the text.
+		case errors.Is(err, context.DeadlineExceeded):
+			jevErr = "Jev 超时"
 		case err != nil:
-			jevErr = err.Error()
+			jevErr = "Jev 请求失败"
 		case !ok[v.Choice]:
-			jevErr = fmt.Sprintf("Jev 返回了不在候选中的功能 %q", v.Choice)
+			jevErr = "Jev 返回了不在候选中的功能"
 		case v.Confidence < r.MinConfidence:
 			jevErr = fmt.Sprintf("Jev 的把握 %.2f 低于 %.2f", v.Confidence, r.MinConfidence)
 		default:

@@ -333,6 +333,16 @@ func (h *Helper) Trusted() bool {
 	return err == nil && r.Trusted
 }
 
+// AskTrust says whether the helper has Accessibility access, and when it
+// has not, has macOS show its prompt, which lists Gloss in the settings
+// for the user to turn on.
+func (h *Helper) AskTrust() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	r, err := h.call(map[string]any{"cmd": "check", "prompt": true}, 2*time.Second)
+	return err == nil && r.Trusted
+}
+
 // ButtonDown says whether the primary mouse button is down anywhere on the
 // desktop. It answers false rather than wait for a selection being read.
 func (h *Helper) ButtonDown() bool {

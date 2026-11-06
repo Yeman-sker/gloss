@@ -136,11 +136,11 @@ func TestMissingAndIncomplete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.Service("translate"); err == nil || !strings.Contains(err.Error(), "缺少 model") {
+	if _, err := c.Service("translate"); err == nil || !strings.Contains(err.Error(), "还没有填写模型") {
 		t.Errorf("no model: %v", err)
 	}
 	c, _ = Read(write(t, `{}`), descs)
-	if _, err := c.Service("translate"); err == nil || !strings.Contains(err.Error(), "缺少 services") {
+	if _, err := c.Service("translate"); err == nil || !errors.Is(err, ErrNoService) {
 		t.Errorf("no service: %v", err)
 	}
 }

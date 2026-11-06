@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"syscall"
@@ -68,7 +69,16 @@ type shell struct {
 	captureGen  uint64
 	routeCancel context.CancelFunc
 
-	autoItem, memItem, loginItem *mygo.MenuItem
+	autoItem, memItem *mygo.MenuItem
+
+	// logFile is the diagnostic log, empty when there is none.
+	logFile string
+
+	// keys registers the shortcut: the system's, or a test's.
+	keys shortcuts
+
+	// prefs is the settings window while it is open.
+	prefs *prefs
 
 	frameLog     bool
 	lastPaint    time.Time
@@ -91,7 +101,11 @@ func Run() error {
 	if err := registerFonts(); err != nil {
 		return err
 	}
-	s := &shell{engine: core.NewEngine(), frameLog: os.Getenv("GLOSS_FRAMELOG") != ""}
+	logFile, err := startLog()
+	if err != nil {
+		log.Printf("log file: %v", err)
+	}
+	s := &shell{logFile: logFile, keys: mygo.GlobalShortcut, engine: core.NewEngine(), frameLog: os.Getenv("GLOSS_FRAMELOG") != ""}
 	specs, err := prompt.Builtin()
 	if err != nil {
 		return err
@@ -105,6 +119,15 @@ func Run() error {
 	if s.cfgPath, err = settings.Path(Name); err != nil {
 		return err
 	}
+	// One Gloss at a time: two would share the shortcut and the memory file.
+	// Starting it again opens the settings of the one running, as opening
+	// the app again from Finder does.
+	if !mygo.App.RequestSingleInstanceLock() {
+		log.Printf("already running: opened its settings")
+		return nil
+	}
+	mygo.App.OnSecondInstance(func([]string, string) { mygo.RunOnMain(func() { s.openPrefs("") }) })
+	mygo.App.OnActivate(func(bool) { s.openPrefs("") })
 	s.loadConfig()
 	cfg := s.config()
 	s.store, err = memory.Open(filepath.Join(filepath.Dir(s.cfgPath), "memory"),
@@ -133,6 +156,7 @@ func Run() error {
 		}
 	}
 	s.panel.retry = s.retry
+	s.panel.explain = s.explain
 	s.panel.switchTo = s.switchTo
 	s.panel.replace = s.replace
 
@@ -146,6 +170,8 @@ func Run() error {
 		os.Exit(0)
 	}()
 
+	// Gloss speaks Chinese alone, and so do mygo's own controls and menus.
+	mygo.App.SetLanguages("zh-Hans")
 	mygo.App.SetActivationPolicy(mygo.ActivationPolicyAccessory)
 	mygo.App.WhenReady(func() {
 		s.win = mygo.NewWindow(mygo.WindowOptions{
@@ -168,6 +194,15 @@ func Run() error {
 		s.makeTray()
 		go s.watchConfig()
 		log.Printf("ready: %s", s.shortcut)
+		// The first run, or one that cannot work: the guide.
+		go func() {
+			trusted := s.helper.Trusted()
+			mygo.RunOnMain(func() {
+				if !trusted || !hasService(s.config()) {
+					s.openPrefs(pageWelcome)
+				}
+			})
+		}()
 	})
 	return mygo.App.Run()
 }
@@ -177,13 +212,13 @@ func (s *shell) registerShortcut(key string) {
 		return
 	}
 	if s.shortcut != "" {
-		mygo.GlobalShortcut.Unregister(s.shortcut)
+		s.keys.Unregister(s.shortcut)
 	}
-	if err := mygo.GlobalShortcut.Register(key, s.trigger); err != nil {
+	if err := s.keys.Register(key, s.trigger); err != nil {
 		log.Printf("shortcut %s: %v", key, err)
 		if s.shortcut != "" && s.shortcut != key {
 			// Keep the one that worked.
-			if mygo.GlobalShortcut.Register(s.shortcut, s.trigger) == nil {
+			if s.keys.Register(s.shortcut, s.trigger) == nil {
 				return
 			}
 		}
@@ -193,14 +228,48 @@ func (s *shell) registerShortcut(key string) {
 	s.shortcut = key
 }
 
+// shortcuts is what mygo.GlobalShortcut does for the shell.
+type shortcuts interface {
+	Register(accelerator string, fn func()) error
+	Unregister(accelerator string)
+}
+
+// pauseShortcut lets go of the shortcut while a new one is recorded, so
+// that pressing the old one records it rather than reading a selection.
+func (s *shell) pauseShortcut() {
+	if s.shortcut != "" {
+		s.keys.Unregister(s.shortcut)
+	}
+}
+
+// resumeShortcut takes the shortcut back after pauseShortcut.
+func (s *shell) resumeShortcut() {
+	if s.shortcut == "" {
+		return
+	}
+	if err := s.keys.Register(s.shortcut, s.trigger); err != nil {
+		log.Printf("shortcut %s: %v", s.shortcut, err)
+		s.shortcut = ""
+	}
+}
+
+// tryShortcut moves to key after pauseShortcut, or takes the old one back
+// when the system will not give Gloss key.
+func (s *shell) tryShortcut(key string) error {
+	if err := s.keys.Register(key, s.trigger); err != nil {
+		s.resumeShortcut()
+		return err
+	}
+	s.shortcut = key
+	return nil
+}
+
 func (s *shell) makeTray() {
 	cfg := s.config()
 	s.autoItem = &mygo.MenuItem{Label: "自动选择功能", Type: mygo.MenuItemCheckbox, Checked: cfg.Routing.Enabled,
 		Click: func(it *mygo.MenuItem, _ *mygo.Window) { s.setOption(it.Checked, "routing", "enabled") }}
 	s.memItem = &mygo.MenuItem{Label: "记忆使用习惯", Type: mygo.MenuItemCheckbox, Checked: cfg.Memory.Enabled,
 		Click: func(it *mygo.MenuItem, _ *mygo.Window) { s.setOption(it.Checked, "memory", "enabled") }}
-	s.loginItem = &mygo.MenuItem{Label: "登录时启动", Type: mygo.MenuItemCheckbox, Checked: cfg.LaunchAtLogin,
-		Click: func(it *mygo.MenuItem, _ *mygo.Window) { s.setOption(it.Checked, "launch_at_login") }}
 	var err error
 	s.tray, err = mygo.NewTray(mygo.TrayOptions{
 		ID:             "main",
@@ -208,14 +277,16 @@ func (s *shell) makeTray() {
 		IconIsTemplate: true,
 		ToolTip:        Name,
 		Menu: mygo.NewMenu([]*mygo.MenuItem{
+			{Label: "关于 " + Name + " " + Version, Click: func(*mygo.MenuItem, *mygo.Window) { s.openPrefs(pageGeneral) }},
+			{Label: "设置…", Accelerator: "CmdOrCtrl+,", Click: func(*mygo.MenuItem, *mygo.Window) { s.openPrefs("") }},
+			{Type: mygo.MenuItemSeparator},
 			s.autoItem,
 			s.memItem,
-			{Label: "清空记忆", Click: func(*mygo.MenuItem, *mygo.Window) { s.clearMemory() }},
 			{Type: mygo.MenuItemSeparator},
-			s.loginItem,
-			{Label: "打开配置文件", Click: func(*mygo.MenuItem, *mygo.Window) { s.openConfig() }},
-			{Type: mygo.MenuItemSeparator},
-			{Label: "退出", Click: func(*mygo.MenuItem, *mygo.Window) {
+			{Label: "退出 " + Name, Click: func(*mygo.MenuItem, *mygo.Window) {
+				if s.prefs != nil {
+					s.prefs.flush()
+				}
 				s.endSession()
 				os.Exit(0)
 			}},
@@ -252,7 +323,7 @@ func (s *shell) captured(r capture.Result, err error, took time.Duration) {
 		err = capture.ErrNoSelection
 	}
 	if err != nil {
-		log.Printf("capture: %v", err)
+		log.Printf("capture: %s", errKind(err))
 		if s.open() && s.panel.notice == "" && errors.Is(err, capture.ErrNoSelection) {
 			s.hide()
 			return
@@ -260,6 +331,9 @@ func (s *shell) captured(r capture.Result, err error, took time.Duration) {
 		s.endSession()
 		s.engine.Cancel()
 		s.showNotice(captureNotice(err))
+		if errors.Is(err, capture.ErrPermission) {
+			s.openPrefs(pageWelcome)
+		}
 		return
 	}
 	if s.open() && s.panel.notice == "" && text == s.panel.source {
@@ -413,7 +487,9 @@ func (s *shell) run(sess *session, id, by, why string) {
 			if s.sess != sess || !sess.accepts(ev.Run) {
 				return
 			}
+			first := sess.firstAt.IsZero()
 			sess.observe(ev, time.Now())
+			logRun(id, ev, sess, first)
 			s.panel.apply(ev)
 		})
 	})
@@ -425,6 +501,19 @@ func (s *shell) run(sess *session, id, by, why string) {
 	replaceable := d.Replaceable && !sess.replaced && sess.src.token != 0 && sess.src.ctx.Editable == core.EditableYes
 	s.panel.beginRun(runID, feature{d.ID, d.Name}, by, why, d.Output, replaceable)
 	s.win.Invalidate()
+}
+
+// logRun keeps a run's progress in the log: when it began to answer and
+// how it ended, never what it said.
+func logRun(id string, ev core.Event, sess *session, first bool) {
+	switch {
+	case ev.Type == core.EventDelta && first:
+		log.Printf("run: %s first text in %dms", id, sess.firstAt.Sub(sess.runStart).Milliseconds())
+	case ev.Type == core.EventDone:
+		log.Printf("run: %s done in %dms", id, time.Since(sess.runStart).Milliseconds())
+	case ev.Type == core.EventError:
+		log.Printf("run: %s failed after %dms: %s", id, time.Since(sess.runStart).Milliseconds(), errKind(ev.Err))
+	}
 }
 
 // switchTo runs another feature on the same selection: the user's
@@ -489,7 +578,7 @@ func (s *shell) replace() {
 					s.panel.replaceable = false
 				}
 				if unknown {
-					log.Printf("replace: %v", err)
+					log.Printf("replace: %s", errKind(err))
 					s.panel.setStatus("取词程序没有回应，替换结果未知，请检查原文", colorDanger)
 					s.win.Invalidate()
 					return
@@ -500,7 +589,7 @@ func (s *shell) replace() {
 				return
 			}
 			if err != nil {
-				log.Printf("replace: %v", err)
+				log.Printf("replace: %s", errKind(err))
 				s.panel.setStatus(replaceFailure(err), colorDanger)
 				s.win.Invalidate()
 				return
@@ -695,8 +784,26 @@ func (s *shell) closed() {
 	if s.visible {
 		s.visible = false
 		s.win.Hide()
+		settle()
 	}
 }
+
+// settle hands the memory a closed window was using back to the system a
+// moment later, once nothing is drawing: Go keeps freed memory for a while
+// on its own, which shows as Gloss's size while it sits in the menu bar.
+func settle() {
+	settleOnce.Do(func() {
+		settleTimer = time.AfterFunc(settleAfter, debug.FreeOSMemory)
+	})
+	settleTimer.Reset(settleAfter)
+}
+
+const settleAfter = 5 * time.Second
+
+var (
+	settleOnce  sync.Once
+	settleTimer *time.Timer
+)
 
 // followCursor lets clicks through the clear edge of the window, which only
 // holds the shadow. The window takes the mouse or not as a whole, so this

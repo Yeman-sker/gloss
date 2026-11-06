@@ -6,7 +6,7 @@
   "replaceable": false,
   "order": 2,
   "settings": [
-    {"key": "depth", "type": "choice", "default": "简短", "options": ["简短", "详细"], "help": "解释的篇幅"},
-    {"key": "style", "type": "choice", "default": "类比", "options": ["类比", "直白"], "help": "多用类比和例子，还是直接说清楚"}
+    {"key": "depth", "label": "篇幅", "type": "choice", "default": "简短", "options": ["简短", "详细"], "help": "解释的篇幅"},
+    {"key": "style", "label": "讲法", "type": "choice", "default": "类比", "options": ["类比", "直白"], "help": "多用类比和例子，还是直接说清楚"}
   ]
 }
