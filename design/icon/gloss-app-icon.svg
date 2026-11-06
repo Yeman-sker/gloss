@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- E · 贴纸 r2：笔完整收进画面，脸右移平衡构图，墨身加印刷颗粒，背景加网点和手绘星。 -->
+  <defs>
+    <clipPath id="sq"><rect x="100" y="100" width="824" height="824" rx="185"/></clipPath>
+    <filter id="iconShadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#000" flood-opacity="0.25"/>
+    </filter>
+    <filter id="wob" x="-10%" y="-10%" width="120%" height="120%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.014" numOctaves="2" seed="3" result="n1"/>
+      <feDisplacementMap in="SourceGraphic" in2="n1" scale="16" xChannelSelector="R" yChannelSelector="G" result="d1"/>
+      <feTurbulence type="fractalNoise" baseFrequency="0.6" numOctaves="1" seed="9" result="n2"/>
+      <feDisplacementMap in="d1" in2="n2" scale="3" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <filter id="grain">
+      <feTurbulence type="fractalNoise" baseFrequency="0.6" numOctaves="3" seed="4"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 0.2  0 0 0 0 0.05  0 0 0 0 0  0 0 0 0.18 0"/>
+      <feComposite in2="SourceGraphic" operator="in"/>
+    </filter>
+    <filter id="ink" x="-5%" y="-5%" width="110%" height="110%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" seed="12" result="sp"/>
+      <feColorMatrix in="sp" type="matrix" values="0 0 0 0 1  0 0 0 0 0.99  0 0 0 0 0.97  0 0 0 4 -2.9" result="fa"/>
+      <feComponentTransfer in="fa" result="flecks"><feFuncA type="linear" slope="0.45"/></feComponentTransfer>
+      <feComposite in="flecks" in2="SourceGraphic" operator="in" result="f"/>
+      <feMerge><feMergeNode in="SourceGraphic"/><feMergeNode in="f"/></feMerge>
+    </filter>
+    <pattern id="dots" width="24" height="24" patternUnits="userSpaceOnUse" patternTransform="rotate(18)">
+      <circle cx="12" cy="12" r="5.5" fill="#E2401F"/>
+    </pattern>
+    <path id="body" d="M292,352 C412,316 612,312 724,342 C812,366 838,452 828,532 C818,614 768,662 686,670 L480,676 L384,758 L400,672 C318,666 244,630 232,540 C220,446 234,368 292,352 Z"/>
+    <g id="pen">
+      <rect x="560" y="256" width="270" height="76" rx="18"/>
+      <path d="M560,270 L516,284 L516,304 L560,318 Z"/>
+    </g>
+    <clipPath id="mouthClip"><path d="M452,572 C482,650 572,648 604,566 C560,584 496,586 452,572 Z"/></clipPath>
+  </defs>
+
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="#FF5B3A" filter="url(#iconShadow)"/>
+
+  <g clip-path="url(#sq)">
+    <ellipse cx="236" cy="830" rx="160" ry="120" fill="url(#dots)" filter="url(#wob)"/>
+    <g fill="none" stroke="#FFE7C2" stroke-width="12" stroke-linecap="round" filter="url(#wob)">
+      <path d="M186,230 l26,26 m0,-26 l-26,26"/>
+      <path d="M816,812 l30,30 m0,-30 l-30,30"/>
+      <path d="M170,826 c20,-26 40,26 60,0 c20,-26 40,26 60,0"/>
+      <path d="M196,600 l10,24 26,2 -20,16 7,26 -23,-14 -23,14 7,-26 -20,-16 26,-2 z" stroke-linejoin="round"/>
+    </g>
+
+    <g transform="rotate(-8 520 520)" filter="url(#wob)">
+      <!-- print shadow + sticker border cover body and pen -->
+      <g transform="translate(18 22)" fill="#B8301A" stroke="#B8301A" stroke-width="64" stroke-linejoin="round">
+        <use href="#body"/><use href="#pen" transform="rotate(-26 680 300)"/>
+      </g>
+      <g fill="#FFFDF7" stroke="#FFFDF7" stroke-width="64" stroke-linejoin="round">
+        <use href="#body"/><use href="#pen" transform="rotate(-26 680 300)"/>
+      </g>
+
+      <!-- highlighter tucked behind the ear -->
+      <g transform="rotate(-26 680 300)" stroke="#16161A" stroke-width="12" stroke-linejoin="round">
+        <rect x="560" y="256" width="270" height="76" rx="18" fill="#FFD43B"/>
+        <rect x="740" y="256" width="90" height="76" rx="18" fill="#35D0A5"/>
+        <path d="M712,262 L712,326" fill="none"/>
+        <path d="M758,294 L810,294" fill="none" stroke-linecap="round"/>
+        <path d="M560,270 L516,284 L516,304 L560,318 Z" fill="#FFD43B"/>
+      </g>
+
+      <use href="#body" fill="#16161A" stroke="#16161A" stroke-width="10" stroke-linejoin="round" filter="url(#ink)"/>
+
+      <g transform="translate(26 0)">
+      <!-- face -->
+      <ellipse cx="404" cy="478" rx="56" ry="70" fill="#FFFDF7" transform="rotate(-6 404 478)"/>
+      <ellipse cx="552" cy="468" rx="48" ry="60" fill="#FFFDF7" transform="rotate(-4 552 468)"/>
+      <circle cx="420" cy="492" r="28" fill="#16161A"/>
+      <circle cx="566" cy="482" r="24" fill="#16161A"/>
+      <circle cx="430" cy="480" r="9" fill="#FFFDF7"/>
+      <circle cx="575" cy="471" r="8" fill="#FFFDF7"/>
+      <ellipse cx="346" cy="566" rx="32" ry="17" fill="#FF7E93" opacity="0.7"/>
+      <ellipse cx="634" cy="552" rx="30" ry="16" fill="#FF7E93" opacity="0.7"/>
+      <!-- open mouth with tongue -->
+      <path d="M452,572 C482,650 572,648 604,566 C560,584 496,586 452,572 Z" fill="#FFFDF7"/>
+      <g clip-path="url(#mouthClip)"><ellipse cx="530" cy="640" rx="50" ry="34" fill="#FF5B3A"/></g>
+      <path d="M452,572 C482,650 572,648 604,566 C560,584 496,586 452,572 Z" fill="none" stroke="#FFFDF7" stroke-width="6" stroke-linejoin="round"/>
+      </g>
+      <!-- cartoon shine -->
+      <path d="M292,420 C296,396 310,380 332,372" fill="none" stroke="#FFFDF7" stroke-width="14" stroke-linecap="round" opacity="0.85"/>
+      <path d="M288,458 L288,462" fill="none" stroke="#FFFDF7" stroke-width="14" stroke-linecap="round" opacity="0.85"/>
+    </g>
+
+    <rect x="100" y="100" width="824" height="824" fill="#fff" filter="url(#grain)"/>
+  </g>
+</svg>

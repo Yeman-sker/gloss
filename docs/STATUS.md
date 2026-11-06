@@ -59,6 +59,7 @@ Gloss 定位为 Bob 的替代品，两者不会同时运行，所以不处理快
 - 边际审查（pi，codex/gpt-6.1-sol，xhigh）：第一轮 9 个问题、复审修复时又发现的 9 个问题都已修，见 [journal](journal/2026-11.md)。
 - 命令：`gloss stats|recent|label`，`cmd/smoke`（真实服务冒烟和延迟），`cmd/routebench`（规则与 Jev 对比）。
 - 分层检查 `arch_test.go`，以及文档和 Agent 配置。
+- App 图标（2026-11-06 负责人选定）：番茄红底上的手剪贴纸，墨色胶囊小怪物，耳后夹着荧光笔。源文件 `design/icon/gloss-app-icon.svg`，导出到 `resources/icon.png`，`make app` 打进 Gloss.app（已核对 .icns）。菜单栏图标没有跟着换。
 
 ## 尚待讨论的想法
 
@@ -66,7 +67,7 @@ Gloss 定位为 Bob 的替代品，两者不会同时运行，所以不处理快
 
 - 增加一个传统翻译 API。
 - 插件运行时：验证 goja 能否支持流式和异步。
-- 产品名和品牌风格。
+- 产品名和品牌风格（App 图标已定，见“已完成”；其余品牌视觉未定）。
 
 ## 进行中
 
@@ -95,5 +96,5 @@ Gloss 定位为 Bob 的替代品，两者不会同时运行，所以不处理快
 ## 开放问题
 
 - 产品正式名称。
-- 品牌视觉风格（有意延后）。
+- 品牌视觉风格（有意延后；App 图标已先定为贴纸风格，界面仍是墨色面板）。
 - 插件运行时最终用 goja 还是 wazero。
