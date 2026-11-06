@@ -166,3 +166,19 @@ func TestActionPassesErrorsAndCancel(t *testing.T) {
 		t.Error("ran without a model")
 	}
 }
+
+// What the settings window shows a person is not what routing tells a model.
+func TestBuiltinSpecsSayWhatTheyDoForPeople(t *testing.T) {
+	specs, err := Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range specs {
+		if s.Summary == "" {
+			t.Errorf("%s has no summary", s.ID)
+		}
+		if s.Summary == s.Purpose {
+			t.Errorf("%s shows people the words meant for the router", s.ID)
+		}
+	}
+}

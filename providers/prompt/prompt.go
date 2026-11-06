@@ -45,6 +45,7 @@ type specFile struct {
 	ID          string    `json:"id"`
 	Name        string    `json:"name"`
 	Purpose     string    `json:"purpose"`
+	Summary     string    `json:"summary"`
 	Output      string    `json:"output"`
 	Replaceable bool      `json:"replaceable"`
 	Order       int       `json:"order"`
@@ -111,7 +112,7 @@ func loadOne(fsys fs.FS, dir string) (Spec, int, error) {
 	}
 	s := Spec{
 		Descriptor: core.Descriptor{
-			ID: f.ID, Name: f.Name, Purpose: f.Purpose,
+			ID: f.ID, Name: f.Name, Purpose: f.Purpose, Summary: f.Summary,
 			Output: core.BlockKind(f.Output), Replaceable: f.Replaceable,
 		},
 		System: string(system),

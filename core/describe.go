@@ -52,6 +52,9 @@ type Descriptor struct {
 	// Purpose is one sentence on when a user wants this action. Routing
 	// shows it to a model choosing between actions.
 	Purpose string
+	// Summary is one line on what the action does, in the words of the person
+	// using it, for the host to show. Empty, the host falls back to Purpose.
+	Summary string
 	// Output is the kind of the action's main result, block 0: BlockText
 	// or BlockMarkdown. Its kind never changes during a run, and deltas
 	// only append to it.

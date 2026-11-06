@@ -2,10 +2,11 @@
   "id": "agent",
   "name": "整理输出",
   "purpose": "把 AI Agent（如 Claude Code、Codex）完成任务后冗长难读的输出，改写成有条理、好读的总结：突出做了什么、结果如何、需要用户做什么。",
+  "summary": "把 AI 冗长的输出整理成好读的总结。",
   "output": "markdown",
   "replaceable": false,
   "order": 4,
   "settings": [
-    {"key": "tone", "label": "语气", "type": "choice", "default": "轻松", "options": ["轻松", "克制"], "help": "总结用的语气"}
+    {"key": "tone", "label": "语气", "type": "choice", "default": "轻松", "options": ["轻松", "克制"]}
   ]
 }

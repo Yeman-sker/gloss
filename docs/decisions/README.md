@@ -12,3 +12,6 @@
 | [0008](0008-two-layer-settings.md) | 设置分两层，Key 放在 0600 的配置文件里 | 已接受，已接入 `settings/` |
 | [0009](0009-memory-and-routing.md) | 记忆与自动路由的分层、存储和统计口径 | 已接受，已接入 `memory/`、`routing/` |
 | [0010](0010-setting-label.md) | 设置声明增加 Label，界面用它做标题 | 已接受，已接入 `core/` |
+| [0011](0011-ink-and-marker.md) | 设置界面的视觉语言：墨与荧光，圆角规则 | 已接受方向，待负责人确认手感 |
+| [0012](0012-baked-icons.md) | 动态图标用烘焙帧，不在运行时跑引擎 | 已接受，已接入 `app/` |
+| [0013](0013-descriptor-summary.md) | 功能描述增加面向用户的 Summary | 已接受，已接入 `core/` |

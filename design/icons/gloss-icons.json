@@ -1,0 +1,13 @@
+[
+  {"id": "general", "icon": "设置", "accent": "#8FA8C8", "motion": "齿轮转动", "chroma": 0.55},
+  {"id": "services", "icon": "钥匙", "accent": "#FFC61A", "motion": "钥匙转动"},
+  {"id": "memory", "icon": "灯泡", "accent": "#FF9F5A", "motion": "灯泡亮起"},
+  {"id": "features", "icon": "星标", "accent": "#FF7E93", "motion": "星星转动"},
+  {"id": "translate", "icon": "地球", "accent": "#35D0A5", "motion": "地球自转"},
+  {"id": "explain", "icon": "书本", "accent": "#6CB8FF", "motion": "书翻开", "chroma": 0.85},
+  {"id": "prompt", "icon": "编辑", "accent": "#FF5B3A", "motion": "铅笔落笔"},
+  {"id": "agent", "icon": "剪贴板", "accent": "#C9A27A", "motion": "勾上一项"},
+  {"id": "welcome", "icon": "旗帜", "accent": "#FF5B3A", "motion": "旗帜飘动"},
+  {"id": "shield", "icon": "盾牌", "accent": "#35D0A5", "motion": "盾牌亮起"},
+  {"id": "link", "icon": "链接", "accent": "#6CB8FF", "motion": "链环扣上"}
+]

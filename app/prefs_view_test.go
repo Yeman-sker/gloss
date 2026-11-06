@@ -17,6 +17,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	"gloss/memory"
 	"gloss/providers/openai"
 	"gloss/providers/prompt"
 	"gloss/settings"
@@ -91,6 +92,9 @@ func typeInto(t *testing.T, tt *ui.Tester, label, text string) {
 	tt.Advance(time.Second)
 }
 
+// contentWidth is a page's column in the tests' window of 780.
+const contentWidth = 780 - widthSidebar - marginSheet - 2*paddingPage
+
 // typeOnly types into a field and leaves it waiting to write.
 func typeOnly(t *testing.T, tt *ui.Tester, label, text string) {
 	t.Helper()
@@ -99,7 +103,10 @@ func typeOnly(t *testing.T, tt *ui.Tester, label, text string) {
 	if !ok {
 		t.Fatalf("no %s in %q", label, tt.Texts())
 	}
-	tt.ClickAt(780-36-14-widthControl/2, r.Y+r.H/2+8)
+	// Inside a card the fields stop at the card's padding; the point is on both.
+	// Its height is from the title's middle: level with the field without a help
+	// line, above its middle with one or two.
+	tt.ClickAt(r.X+contentWidth-14-widthControl/2, r.Y+r.H/2+10)
 	if !tt.Focused(label) {
 		if f, err := os.Create(filepath.Join(os.TempDir(), "gloss-prefs.png")); err == nil {
 			_ = png.Encode(f, tt.Image())
@@ -109,6 +116,14 @@ func typeOnly(t *testing.T, tt *ui.Tester, label, text string) {
 	}
 	tt.Key(ui.Cmd, ui.KeyA)
 	tt.Type(text)
+}
+
+// openServices opens every service's line, to reach its fields.
+func openServices(p *prefs, tt *ui.Tester) {
+	for _, d := range p.services {
+		d.open = true
+	}
+	tt.Frame()
 }
 
 func TestSettingsSetUpAServiceFromNothing(t *testing.T) {
@@ -171,6 +186,7 @@ func TestSettingsSetUpAServiceFromNothing(t *testing.T) {
 func TestSettingsRejectAndExplain(t *testing.T) {
 	p, tt, path := testPrefs(t, `{"services":{"a":{"api_key":"k","model":"m"}},"default_service":"a"}`)
 	before, _ := os.ReadFile(path)
+	openServices(p, tt)
 	typeInto(t, tt, "名称", "")
 	if after, _ := os.ReadFile(path); string(after) != string(before) {
 		t.Errorf("an empty name was written:\n%s", after)
@@ -201,6 +217,9 @@ func TestSettingsFeaturePageWritesItsOwnSettings(t *testing.T) {
 	tt.Frame()
 	if err := tt.Click("详细"); err != nil {
 		t.Fatalf("%v: %q", err, tt.Texts())
+	}
+	if err := tt.Click("高级"); err != nil { // the model of one feature is not an everyday thing
+		t.Fatal(err)
 	}
 	typeInto(t, tt, "模型", "bigger")
 	m := fileJSON(t, path)
@@ -247,14 +266,13 @@ func TestSettingsRecordAShortcut(t *testing.T) {
 	keys := p.s.keys.(*fakeKeys)
 	p.page = pageGeneral
 	tt.Frame()
-	if err := tt.Click("快捷键"); err != nil { // the title; the recorder is beside it
-		t.Fatal(err)
+	clickRecorder := func() {
+		t.Helper()
+		if err := tt.Click("录制快捷键"); err != nil {
+			t.Fatal(err)
+		}
 	}
-	r, _ := tt.Find("⌥⇧D")
-	if !isMac {
-		r, _ = tt.Find("Alt+Shift+D")
-	}
-	tt.ClickAt(r.X+r.W/2, r.Y+r.H/2)
+	clickRecorder()
 	if !p.recording || keys.held["Alt+Shift+D"] {
 		t.Fatalf("recording %v, old shortcut held %v", p.recording, keys.held)
 	}
@@ -266,8 +284,7 @@ func TestSettingsRecordAShortcut(t *testing.T) {
 		t.Errorf("no error shown: %q", tt.Texts())
 	}
 
-	r, _ = tt.Find(shortcutLabel("Alt+Shift+D"))
-	tt.ClickAt(r.X+r.W/2, r.Y+r.H/2)
+	clickRecorder()
 	tt.Key(ui.Shift, ui.KeyE) // types a capital E: not a shortcut, keeps listening
 	if !p.recording {
 		t.Fatal("stopped on Shift+E")
@@ -281,8 +298,7 @@ func TestSettingsRecordAShortcut(t *testing.T) {
 	}
 
 	// Escape gives up and takes the old one back.
-	r, _ = tt.Find(shortcutLabel("Cmd+Shift+E"))
-	tt.ClickAt(r.X+r.W/2, r.Y+r.H/2)
+	clickRecorder()
 	tt.Key(0, ui.KeyEscape)
 	if p.recording || !keys.held["Cmd+Shift+E"] {
 		t.Fatalf("recording %v, held %v", p.recording, keys.held)
@@ -387,7 +403,7 @@ func waitFor(tt *ui.Tester, ok func() bool) {
 
 func TestSettingsRenameKeepsWhatIsStillBeingTyped(t *testing.T) {
 	p, tt, path := testPrefs(t, `{"services":{"main":{"api_key":"sk-old","model":"m"}}}`)
-	tt.Frame()
+	openServices(p, tt)
 	typeOnly(t, tt, "名称", "work")
 	tt.Advance(400 * time.Millisecond)
 	typeOnly(t, tt, "API Key", "sk-new")
@@ -398,6 +414,188 @@ func TestSettingsRenameKeepsWhatIsStillBeingTyped(t *testing.T) {
 	}
 	if len(p.services) != 1 {
 		t.Errorf("%d drafts, want 1", len(p.services))
+	}
+}
+
+func TestServiceFoldsToOneLineThatOpens(t *testing.T) {
+	p, tt, _ := testPrefs(t, `{"services":{"main":{"api_key":"k","model":"m"}}}`)
+	tt.Frame()
+	if tt.HasText("接口地址") {
+		t.Fatal("a complete service shows its fields before it is opened")
+	}
+	if !tt.HasText("m · 未测试") {
+		t.Errorf("the line does not say what it is: %q", tt.Texts())
+	}
+	if err := tt.Click("main"); err != nil {
+		t.Fatal(err)
+	}
+	if !tt.HasText("接口地址") || !p.services[0].open {
+		t.Fatalf("the line did not open: %q", tt.Texts())
+	}
+	if err := tt.Click("main"); err != nil {
+		t.Fatal(err)
+	}
+	if tt.HasText("接口地址") {
+		t.Fatal("the line did not close")
+	}
+}
+
+// A service open to be filled in stays open once it is complete: its fields must
+// not fold away under the hand that typed the last of them.
+func TestServiceStaysOpenWhileBeingFilled(t *testing.T) {
+	_, tt, _ := testPrefs(t, `{"services":{"main":{"model":"m"}}}`)
+	tt.Frame()
+	if !tt.HasText("接口地址") {
+		t.Fatalf("an incomplete service must show its fields: %q", tt.Texts())
+	}
+	typeInto(t, tt, "API Key", "sk-test-key")
+	if !tt.HasText("接口地址") {
+		t.Fatal("the fields folded as the service became complete")
+	}
+}
+
+func TestFeaturesReorderByKeyboardAndDrag(t *testing.T) {
+	p, tt, path := testPrefs(t, `{"services":{"a":{"api_key":"k","model":"m"}},"default_service":"a"}`)
+	p.page = pageFeatures
+	tt.Frame()
+	tt.Frame()
+	actions := func() []any {
+		acts, _ := get(fileJSON(t, path), "actions").([]any)
+		return acts
+	}
+	// Keyboard: the grip takes the focus, and the arrow moves the feature.
+	r, ok := tt.Find("调整翻译的顺序")
+	if !ok {
+		t.Fatalf("no grip: %q", tt.Texts())
+	}
+	tt.ClickAt(r.X+r.W/2, r.Y+r.H/2)
+	if !tt.Focused("调整翻译的顺序") {
+		t.Fatal("the grip did not take the focus")
+	}
+	tt.Key(0, ui.KeyDown)
+	tt.Frame()
+	if acts := actions(); len(acts) != 4 || acts[0] != "explain" || acts[1] != "translate" {
+		t.Fatalf("after Down: %v", acts)
+	}
+
+	// Pointer: take agent's grip up to the first row.
+	tt.Advance(time.Second)
+	from, ok := tt.Find("调整整理输出的顺序")
+	if !ok {
+		t.Fatal("no grip for agent")
+	}
+	to, ok := tt.Find("调整释义的顺序")
+	if !ok {
+		t.Fatal("no grip for explain")
+	}
+	tt.Press(from.X+from.W/2, from.Y+from.H/2)
+	tt.Move(from.X+from.W/2+6, from.Y+from.H/2-12)
+	tt.Frame()
+	tt.Move(to.X+60, to.Y+to.H/2)
+	tt.Frame()
+	tt.Release(to.X+60, to.Y+to.H/2)
+	tt.Frame()
+	tt.Frame()
+	if acts := actions(); len(acts) != 4 || acts[0] != "agent" {
+		t.Fatalf("after the drag: %v", acts)
+	}
+	// A feature that is off keeps its place out of the order: it has no grip.
+	if err := tt.Click("启用释义"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if _, ok := tt.Find("调整释义的顺序"); ok {
+		t.Error("a feature that is off offers a grip")
+	}
+}
+
+func TestRecorderShowsTheKeysAsTheyAreHeld(t *testing.T) {
+	p, tt, _ := testPrefs(t, "")
+	p.page = pageGeneral
+	tt.Frame()
+	if !isMac {
+		t.Skip("the caps show macOS's marks")
+	}
+	for _, k := range []string{"⌥", "⇧", "D"} {
+		if !tt.HasText(k) {
+			t.Fatalf("no cap for %s: %q", k, tt.Texts())
+		}
+	}
+	if err := tt.Click("录制快捷键"); err != nil {
+		t.Fatal(err)
+	}
+	if !tt.HasText("按下新的快捷键") {
+		t.Fatalf("not listening: %q", tt.Texts())
+	}
+	tt.HoldModifiers(ui.Super | ui.Shift)
+	tt.Frame()
+	if !tt.HasText("⌘") || !tt.HasText("⇧") || tt.HasText("按下新的快捷键") {
+		t.Fatalf("the held keys do not show: %q", tt.Texts())
+	}
+	tt.HoldModifiers(0)
+	tt.Frame()
+	if !tt.HasText("按下新的快捷键") {
+		t.Fatalf("the caps stayed after letting go: %q", tt.Texts())
+	}
+}
+
+func TestMemoryPageSaysWhatItLearnedAndForgets(t *testing.T) {
+	p, tt, _ := testPrefs(t, `{"services":{"a":{"api_key":"k","model":"m"}},"default_service":"a"}`)
+	store, err := memory.Open(t.TempDir(), memory.Options{MaxRecords: 100, RetentionDays: 30}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.s.store = store
+	now := tt.Now()
+	for i, final := range []string{"translate", "translate", "explain"} {
+		rec := memory.Record{Session: fmt.Sprintf("s%d", i), Time: now, Final: final, Initial: "translate", Routing: true, Outcome: "done"}
+		if final != rec.Initial {
+			rec.Corrections = []memory.Correction{{From: rec.Initial, To: final}}
+		}
+		if _, err := store.Add(rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p.page = pageMemory
+	tt.Frame()
+	if !tt.HasText("用了 3 次") || !tt.HasText("最常用的是翻译") || !tt.HasText("33% 被你改选") {
+		t.Fatalf("stats do not show: %q", tt.Texts())
+	}
+	if tt.HasText("最长等待") {
+		t.Error("the inner settings show without opening 高级")
+	}
+	if err := tt.Click("高级"); err != nil {
+		t.Fatal(err)
+	}
+	if !tt.HasText("最长等待") {
+		t.Fatalf("高级 did not open: %q", tt.Texts())
+	}
+	if err := tt.Click("清空…"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("清空"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if tt.HasText("用了") || !tt.HasText("已清空") {
+		t.Fatalf("the page still shows what was cleared: %q", tt.Texts())
+	}
+}
+
+// With less motion asked for, a choice and a page are simply there: nothing is
+// left waiting for a stroke to finish.
+func TestReducedMotionShowsTheEndAtOnce(t *testing.T) {
+	p, tt, _ := testPrefs(t, `{"services":{"a":{"api_key":"k","model":"m"}},"default_service":"a"}`)
+	tt.SetPreferences(ui.Preferences{ReduceMotion: true})
+	if got := swipe(10*time.Millisecond, swipeTime, true); got != 1 {
+		t.Errorf("a stroke with motion reduced stands at %v", got)
+	}
+	for _, page := range []string{pageGeneral, pageServices, pageMemory, pageFeatures, pageFeature + "translate"} {
+		p.page = page
+		tt.Frame()
+	}
+	if got := swipe(10*time.Millisecond, swipeTime, false); got <= 0 || got >= 1 {
+		t.Errorf("a stroke with motion stands at %v", got)
 	}
 }
 
@@ -412,7 +610,7 @@ func TestSettingsAddingAServiceKeepsTheDefault(t *testing.T) {
 
 func TestSettingsWriteWhatWasTypedWhenThePageChanges(t *testing.T) {
 	p, tt, path := testPrefs(t, `{"services":{"main":{"api_key":"k","model":"m"}}}`)
-	tt.Frame()
+	openServices(p, tt)
 	typeOnly(t, tt, "模型", "m2")
 	p.page = pageGeneral
 	tt.Frame()
@@ -432,5 +630,41 @@ func TestSettingsAddingAServiceReadsTheDefaultFromTheFile(t *testing.T) {
 	m := fileJSON(t, path)
 	if get(m, "default_service") != "work" || get(m, "services", "work") == nil {
 		t.Errorf("file = %v, want work kept as the default", m)
+	}
+}
+
+// A page is one column, the same at every size: centred once the window has room,
+// and never out of the sheet when it does not.
+func TestPagesFitEveryWindowSize(t *testing.T) {
+	for _, size := range [][2]int{{700, 480}, {820, 600}, {1100, 760}, {1440, 900}} {
+		p, tt, _ := testPrefs(t, `{"services":{"a":{"api_key":"k","model":"m"},"a-service-with-a-long-name":{"model":"gpt-4.1-mini"}},"default_service":"a"}`)
+		tt.SetSize(size[0], size[1])
+		for _, d := range p.services {
+			d.open = true
+		}
+		for _, page := range []string{pageGeneral, pageServices, pageFeatures, pageFeature + "translate", pageFeature + "explain", pageMemory} {
+			p.page = page
+			p.disclosed["general.advanced"], p.disclosed["memory.advanced"] = true, true
+			tt.Frame()
+			tt.Advance(time.Second)
+			tt.Frame()
+			sheet := float32(size[0]) - widthSidebar - marginSheet
+			left, right := widthSidebar, float32(size[0])-marginSheet
+			if pad := pagePadding(sheet); sheet >= widthPage+2*paddingPage {
+				// Centred: the column's edges are the same distance from the sheet's.
+				left, right = widthSidebar+pad, widthSidebar+pad+widthPage
+			}
+			for _, text := range tt.Texts() {
+				r, ok := tt.Find(text)
+				if !ok || r.X < widthSidebar {
+					continue // the navigation
+				}
+				// A grip hangs in the margin, and a control may reach past the edge by
+				// its own clear padding, so that what shows lines up.
+				if r.X < left-24 || r.X+r.W > right+10 {
+					t.Errorf("%dx%d %s: %q at %v is out of %v to %v", size[0], size[1], page, text, r, left, right)
+				}
+			}
+		}
 	}
 }

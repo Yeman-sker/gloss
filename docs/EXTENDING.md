@@ -25,7 +25,7 @@ providers/prompt/specs/<ID>/
 
 模板变量：`{{text}}`、`{{surrounding}}`、`{{source_app}}`、`{{source_lang}}`、`{{target_lang}}`、`{{setting.<键>}}`。`{{#x}}…{{/x}}` 在 x 非空时输出，`{{^x}}…{{/x}}` 在 x 为空时输出。用到未声明的设置或未知变量时，加载就会报错。
 
-1. 写好三个文件。`purpose` 要写清用户什么时候想用它，路由靠这句话区分功能。
+1. 写好三个文件。`purpose` 要写清用户什么时候想用它，路由靠这句话区分功能。`summary` 是设置界面上给用户看的一句说明，用用户的口吻写它做什么。设置项的 `help` 默认不写：只有名称和取值都说不清时才加，而且尽量不超过一行。
 2. `go test ./providers/prompt`：所有声明都会被加载和校验。
 3. 新功能默认启用；用户的配置里有 `actions` 列表时，要把 ID 加进去才会出现。
 4. 用真实服务试几次：`go run ./cmd/smoke -feature <ID>`。

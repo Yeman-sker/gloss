@@ -42,6 +42,7 @@ Action 可以再实现 `Describer`，返回 `Descriptor`，见[决策 0007](deci
 |---|---|
 | `ID`、`Name` | 稳定的用途名（`translate`）和界面上的名字 |
 | `Purpose` | 一句用途描述，路由用它 |
+| `Summary` | 一句写给用户看的说明，设置界面用它；没有时退回 `Purpose`，见[决策 0013](decisions/0013-descriptor-summary.md) |
 | `Output` | 主结果（index 0）的类型，`text` 或 `markdown`，整个执行中不变 |
 | `Replaceable` | 结果适合替换原文。能否安全写回由宿主在运行时判断 |
 | `Settings` | 设置项：键、界面上的名称（`Label`，见[决策 0010](decisions/0010-setting-label.md)）、类型（`text`、`bool`、`choice`、`number`）、默认值、选项、说明 |
