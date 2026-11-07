@@ -22,7 +22,7 @@ import (
 
 // Version is the version of this build. mygo.json says the same, which a
 // test checks.
-const Version = "0.1.2"
+const Version = "0.1.3"
 
 var isMac = runtime.GOOS == "darwin"
 
@@ -511,8 +511,16 @@ func (p *prefs) general(c *ui.Context) {
 				_ = p.set("launch_at_login", on, "launch_at_login")
 			}
 		})
+		state, version, err := p.s.upd.get()
+		p.row(c, "update", "更新", updateNote(state, version, err, cfg.AutoUpdate), func() { p.updateControl(c, state) })
 	})
 	p.disclosure(c, "general.advanced", "高级", func() {
+		p.row(c, "auto_update", "自动检查更新", "有新版本就在后台下载，重启 Gloss 后生效", func() {
+			on := cfg.AutoUpdate
+			if markerSwitch(c, &on, "自动检查更新", false).Changed() {
+				_ = p.set("auto_update", on, "auto_update")
+			}
+		})
 		p.row(c, "file", "配置文件", homeShort(p.s.cfgPath), func() {
 			if button(c, buttonSpec{label: "打开", key: "file.open", glyph: glyphFile, small: true}).Clicked() {
 				p.s.openConfig()
@@ -526,6 +534,22 @@ func (p *prefs) general(c *ui.Context) {
 			})
 		}
 	})
+}
+
+// updateControl checks for a new version, or restarts into the one ready.
+func (p *prefs) updateControl(c *ui.Context, state updateState) {
+	switch state {
+	case updateOff:
+	case updateReady:
+		if button(c, buttonSpec{label: "重启以更新", key: "update.restart", kind: buttonPrimary, small: true}).Clicked() {
+			p.s.restartToUpdate()
+		}
+	default:
+		busy := state == updateChecking || state == updateDownloading
+		if button(c, buttonSpec{label: "检查更新", key: "update.check", glyph: glyphRetry, small: true, off: busy}).Clicked() && !busy {
+			go p.s.checkUpdate()
+		}
+	}
 }
 
 // homeShort writes a path under the home folder as ~ does.

@@ -3,8 +3,8 @@
 > 新会话先读这里。这里只记录现状，历史放到 [journal](journal/)，规划在 [Linear](https://linear.app/yeman/team/GLO/overview)。
 
 **最后更新：** 2026-11-07
-**阶段：** 设置窗口重构、动态图标、菜单栏图标和 Arc 取词修复已在 main，最新发布是 [v0.1.2](https://github.com/Yeman-sker/gloss/releases/tag/v0.1.2)（v0.1.1 的 Arc 修复无效），负责人已确认设置窗口，Gloss 0.1.1 项目已完成；面板接入图标和荧光黄（GLO-48，0.1.3）已合并，真实鼠标下的手感还没有确认；负责人实测 GLO-22 提出的 6 个面板问题已改完并合并（负责人 2026-11-07 决定），真实鼠标和真实服务下还没有上手；压内存（GLO-50，范围含面板）做了两处改动，再往下压要改 mygo 或面板窗口的生命周期，待讨论
-**一句话：** 代码已在 macOS 上日常使用；真实服务和 Jev 还没有按场景验证，负责人常用应用里的写回也没验证。0.1.1 的设置窗口按方向 A“墨与荧光”（[0011](decisions/0011-ink-and-marker.md)）重写了外观和交互，接入了烘焙的动态图标（[0012](decisions/0012-baked-icons.md)），菜单栏图标已换，面板也已接入（GLO-48）。发布放在私有仓库的 GitHub Release，ad-hoc 签名，不公证，没有自动更新；Gloss 计划闭源（负责人 2026-11-06 决定）。
+**阶段：** 设置窗口重构、动态图标、菜单栏图标和 Arc 取词修复已在 main，最新发布是 [v0.1.3](https://github.com/Yeman-sker/gloss/releases/tag/v0.1.3)，含面板（GLO-48、GLO-22）、压内存（GLO-50）和自动更新（GLO-37），负责人已确认设置窗口，Gloss 0.1.1 项目已完成；面板接入图标和荧光黄（GLO-48，0.1.3）已合并，真实鼠标下的手感还没有确认；负责人实测 GLO-22 提出的 6 个面板问题已改完并合并（负责人 2026-11-07 决定），真实鼠标和真实服务下还没有上手；压内存（GLO-50，范围含面板）做了两处改动，再往下压要改 mygo 或面板窗口的生命周期，待讨论
+**一句话：** 代码已在 macOS 上日常使用；真实服务和 Jev 还没有按场景验证，负责人常用应用里的写回也没验证。0.1.1 的设置窗口按方向 A“墨与荧光”（[0011](decisions/0011-ink-and-marker.md)）重写了外观和交互，接入了烘焙的动态图标（[0012](decisions/0012-baked-icons.md)），菜单栏图标已换，面板也已接入（GLO-48）。发布放在私有仓库的 GitHub Release，用 Apple Development 证书签名，不公证；0.1.3 起用本机 gh 的登录自动更新（[0015](decisions/0015-updates-and-signing.md)）；Gloss 计划闭源（负责人 2026-11-06 决定）。
 
 ## 当前重点
 
@@ -25,7 +25,7 @@
 
 设置分两层：产品设置（模型服务和 Key、快捷键、记忆、路由等）和功能设置（每个功能或插件声明自己的设置项，界面由宿主统一生成）。
 
-拆解和顺序见 Linear 项目 [macOS 本地实测](https://linear.app/yeman/project/macos-本地实测-decd5658cbd1)（GLO-7 至 GLO-31）和 **Gloss 0.1.0**（GLO-26、GLO-32 至 GLO-40）。截至 2026-11-06，0.1.0 的代码都已完成，其中 GLO-37（自动更新）已取消。GLO-7 等负责人实测，仍为 Todo；GLO-22 是连续实测，In Progress。需要负责人实测的验收项写在各 issue 和[实测清单](research/2026-11-05-local-trial.md)里。
+拆解和顺序见 Linear 项目 [macOS 本地实测](https://linear.app/yeman/project/macos-本地实测-decd5658cbd1)（GLO-7 至 GLO-31）和 **Gloss 0.1.0**（GLO-26、GLO-32 至 GLO-40）。截至 2026-11-06，0.1.0 的代码都已完成，GLO-37（自动更新）取消后，负责人 2026-11-07 决定重新打开，做进了 0.1.3。GLO-7 等负责人实测，仍为 Todo；GLO-22 是连续实测，In Progress。需要负责人实测的验收项写在各 issue 和[实测清单](research/2026-11-05-local-trial.md)里。
 
 Gloss 定位为 Bob 的替代品，两者不会同时运行，所以不处理快捷键冲突。
 
@@ -33,8 +33,9 @@ Gloss 定位为 Bob 的替代品，两者不会同时运行，所以不处理快
 
 | 能力 | 状态 |
 |---|---|
-| 构建主程序、`make app` 打包 | 已实测：从 `Gloss.app` 运行，helper 从 Resources 启动；不进 Dock（`LSUIElement`），设置窗口打开时才进 |
+| 构建主程序、`make app` 打包 | 已实测：0.1.3 起用 Apple Development 证书签名、开 hardened runtime，从 `open` 启动正常；从 `Gloss.app` 运行，helper 从 Resources 启动；不进 Dock（`LSUIElement`），设置窗口打开时才进 |
 | 设置窗口（通用、模型服务、功能、自动选择）和首次引导，0.1.1 外观 | 已实测：真实窗口切页、帧间隔、内存，以及 700×480 到 1440×900 四种尺寸（[数据](research/2026-11-06-settings-ink.md)）；每页和交互由无界面测试与录屏核对。负责人确认了观感（图标颜色、圆角、手感、密度）、Cmd+V 粘贴和录制快捷键，后两项没有留下日志。未实测：窗口真实圆角是否同心、真实 1 倍显示器、减弱动效的观感 |
+| 自动更新（GLO-37） | 正式包用 gh 的登录读到了真实私有仓库的最新 Release（已实测）。检查、下载、校验、暂存、重启的整个流程，用本地假服务器在真实 .app 上实测通过；改坏一个字节的更新包被拒绝（[0015](decisions/0015-updates-and-signing.md)）。未测：从真实 GitHub 完成一次更新、更新后辅助功能授权是否保留，要等 0.1.3 之后的版本；设置页的“更新”一行只有无界面测试 |
 | 单实例 | 已实测：第二次启动会退出，并让第一个实例打开设置 |
 | 诊断日志 | 已实测：`~/Library/Logs/Gloss/gloss.log`，0600，有启动和就绪记录 |
 | 取词 helper：超时重启、错误分类、来源信号、剪贴板完整恢复 | TextEdit、Chrome、Chromium 的实验实例已实测（[数据](research/2026-11-06-arc-capture.md)）；Arc 负责人实测可用（走 AX，下载的 v0.1.2 为 58ms）；Safari 负责人用过旧路径，新路径未测；终端、Electron 未测 |
@@ -68,6 +69,7 @@ Gloss 定位为 Bob 的替代品，两者不会同时运行，所以不处理快
 - 0.1.1 设置窗口（2026-11-06，已发布，负责人已确认）：组件层 `app/prefs_ui.go`、圆角、颜色、字号和间距 token、荧光笔选中和保存反馈、键帽录制器、服务折叠、拖动排序；导航减到四项，默认只露出常用设置，其余收进“高级”；动态图标由 `make icons` 烘焙（`design/icons/`、`app/icons.go`），单色字形在 `app/glyphs.go`；功能声明新增 `Summary`（[0013](decisions/0013-descriptor-summary.md)）。
 - 面板接入图标和荧光黄（GLO-48）：功能切换换成 22pt 动态图标（当前功能带名称，其余只有图标，靠 tip 说明），复制、替换、重试、修复、回到底部、展开原文加字形，蓝色换成 `colorMarker`，主题与设置窗口共用 `inkTheme`。面板自己判断悬停并自己画 tip（`panel.hover`、`tipView`），因为 mygo 的悬停在 Gloss 上不生效。
 - 压内存（GLO-50）：`debug.SetGCPercent(50)`，设置内容面板不再圆角裁剪。只开设置窗口时静止少约 12 MB、峰值少约 19 MB，日常使用后关闭少约 3–5 MB；设置窗口 72 张截图逐像素相同，帧间隔前后重叠（[数据](research/2026-11-06-glo50-memory.md)）。
+- 自动更新（GLO-37，0.1.3）：`app/update.go`，mygo 的 Updater 加一个读私有 Release 的来源（本机 gh 的登录），后台下载、ed25519 校验、暂存，托盘和设置里“重启以更新”；`make release` 一条命令构建、签名、上传；设置项 `auto_update`。见 [0015](decisions/0015-updates-and-signing.md) 和[发布](DEVELOPMENT.md#发布)。
 - App 图标（2026-11-06 负责人选定）：番茄红底上的手剪贴纸，墨色胶囊小怪物，耳后夹着荧光笔。源文件 `design/icon/gloss-app-icon.svg`，导出到 `resources/icon.png`，`make app` 打进 Gloss.app（已核对 .icns）。菜单栏图标是它的单色模板版：同一个小怪物和耳后的荧光笔，源文件 `design/icon/gloss-tray-icon.svg`，`make icons` 导出到 `app/tray.png`。
 
 ## 尚待讨论的想法
@@ -98,10 +100,11 @@ Gloss 定位为 Bob 的替代品，两者不会同时运行，所以不处理快
 | AX 写入是否进入各应用的撤销栈 | 替换后可能无法 Cmd+Z | TextEdit 可撤销；其他应用未测 |
 | “最近一次明确选择”曾是全局的，一次手动选择会带偏之后的路由 | 路由可能被一次选择带偏 | 已收窄到同一应用、同类文字、两小时内（GLO-40），效果看实测 |
 | 只读环境里的英文单词规则一律判翻译，用户可能想看释义 | 这类情况不会交给 Jev 或记忆 | 观察中 |
-| 程序 16.44 MB（字体约 4 MB，粗体加了 1.3 MB）；空闲 35–38 MB，其中 mygo 框架约 35 MB，字体被复制进内存约 3.8 MB；启动时有不到一秒的约 95 MB 峰值，来自 Metal 和 mygo，菜单栏示例程序同样会有（macOS 实测，见[内存](research/2026-11-06-memory.md)和 [GLO-50](research/2026-11-06-glo50-memory.md)） | 偏离“守住轻量”，大头不在 Gloss 自己 | 已查明。字体不复制要改 mygo，未做，待讨论 |
+| 程序 16.44 MB（字体约 4 MB，粗体加了 1.3 MB；0.1.3 的自动更新又加了 0.2 MB）；空闲 35–38 MB，其中 mygo 框架约 35 MB，字体被复制进内存约 3.8 MB；启动时有不到一秒的约 95 MB 峰值，来自 Metal 和 mygo，菜单栏示例程序同样会有（macOS 实测，见[内存](research/2026-11-06-memory.md)和 [GLO-50](research/2026-11-06-glo50-memory.md)） | 偏离“守住轻量”，大头不在 Gloss 自己 | 已查明。字体不复制要改 mygo，未做，待讨论 |
 | 只开设置窗口：静止 58–60 MB，走页时瞬时 148–151 MB，关闭后 47–49 MB，比空闲多约 11–14 MB。主要是 `Malloc Small` 和 Go 堆（macOS 实测，见[数据](research/2026-11-06-glo50-memory.md)） | 打开过设置后常驻内存上升 | GLO-50 前是 70–71、167–170、49–57 MB。`malloc_zone_pressure_relief` 实测归还 0 MB，接受 |
 | 面板的内存分三种（macOS 实测，见[数据](research/2026-11-06-glo50-memory.md)）：静止 44–66 MB，2 秒不绘制 mygo 就回收；动画时瞬时 107–161 MB；关闭后 43–62 MB，随用过的面板大小和次数上涨，开关 20 次不增长。动画时约 55 MB 是图形内存，Go 里的裁剪遮罩最多约 30 MB。之前写的“面板打开时 154–168 MB”是动画刚结束的瞬时值，已更正 | 瞬时占用偏高，大头在 mygo 和 Metal | GLO-50 压了 3–7 MB；继续压要改 mygo 或关闭后销毁窗口（未测），待讨论 |
-| 没有签名和公证：发布版是 ad-hoc 签名，`spctl` 判 rejected（实测）；浏览器下载后要去掉隔离属性才能打开（步骤见[发布](DEVELOPMENT.md#发布)，弹窗本身未测） | 只影响分发 | 负责人决定暂不签名 |
+| 没有公证：0.1.3 起用 Apple Development 证书签名（之前是 ad-hoc），`spctl` 仍判 rejected（实测）；浏览器下载后要去掉隔离属性才能打开（步骤见[发布](DEVELOPMENT.md#发布)，弹窗本身未测）。自动更新装的版本不带隔离属性 | 只影响第一次安装 | 负责人决定暂不公证 |
+| 更新私钥只有负责人机器上一份（`~/Library/Application Support/mygo/update-keys/gloss/`），打正式包也只能用负责人的证书 | 私钥丢了，已安装的 Gloss 就收不到更新，只能手动重装 | 需负责人另外备份私钥 |
 | 开发版和正式版的单实例锁不同，能同时运行，都报告 `ready`，没有任何提示（实测）；两者抢同一个快捷键，按键归谁未测，并共用配置和记忆文件 | 试正式版时开着 `mygo dev`，按快捷键可能进了另一个 | 试之前先停掉开发版，见[发布](DEVELOPMENT.md#发布) |
 | 面板交互仍有抖动、不够丝滑（macOS 160Hz，负责人实测）；录屏里点击时有 57–82ms 的帧间隔，原因未查明。GLO-22 实测：缩放写满文字的面板每帧多 20–40ms，已去掉（[数据](research/2026-11-06-panel-streaming.md)），可能是其中一部分原因（推测）。GLO-48 的脚本里前后版本都偶有 65–69ms 的长帧，新版本还有一次 1008ms，未复现（[数据](research/2026-11-06-panel-icons.md)） | 手感未达预期 | 元素生命周期已修，加了帧间隔日志，卡顿原因仍未查明（GLO-10） |
 | mygo 只在应用激活时跟踪鼠标，而 Gloss 从不激活（读源码）。所以面板里 `Hovered()` 和 `Tooltip()` 不生效，面板自己判断指针、自己画 tip；鼠标样式用私有 API `SetsCursorInBackground` 设置 | 系统升级后鼠标样式可能失效，失效时只是样式不变 | 观察中 |

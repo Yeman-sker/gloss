@@ -16,3 +16,4 @@
 | [0012](0012-baked-icons.md) | 动态图标用烘焙帧，不在运行时跑引擎 | 已接受，已接入 `app/` |
 | [0013](0013-descriptor-summary.md) | 功能描述增加面向用户的 Summary | 已接受，已接入 `core/` |
 | [0014](0014-panel-press-and-plan.md) | 面板不猜手势，打开前先定框架 | 已接受，已接入 `app/`，等负责人上手确认 |
+| [0015](0015-updates-and-signing.md) | 自动更新读私有 Release，改用固定的证书签名 | 已接受，已接入 `app/`，真实更新待下个版本验证 |

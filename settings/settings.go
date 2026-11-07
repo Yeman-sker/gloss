@@ -68,6 +68,7 @@ type Config struct {
 	Shortcut       string
 	TargetLang     string
 	LaunchAtLogin  bool
+	AutoUpdate     bool // look for a new version after launch and once a day
 	Memory         Memory
 	Routing        Routing
 	// Actions are the features that are on, in their order.
@@ -97,6 +98,7 @@ type file struct {
 	Shortcut       string             `json:"shortcut"`
 	TargetLang     string             `json:"target_lang"`
 	LaunchAtLogin  bool               `json:"launch_at_login"`
+	AutoUpdate     *bool              `json:"auto_update"`
 	Memory         *struct {
 		Enabled       *bool `json:"enabled"`
 		RetentionDays *int  `json:"retention_days"`
@@ -151,6 +153,7 @@ func Defaults(path string, actions []core.Descriptor) *Config {
 		Services:   map[string]Service{},
 		Shortcut:   DefaultShortcut,
 		TargetLang: DefaultTargetLang,
+		AutoUpdate: true,
 		Memory:     Memory{Enabled: true, RetentionDays: 90, MaxRecords: 5000},
 		Routing:    Routing{Enabled: true, WaitMillis: 800, MinConfidence: 0.6},
 		actions:    map[string]actionConfig{},
@@ -302,6 +305,9 @@ func (c *Config) apply(f *file, actions []core.Descriptor) error {
 		c.TargetLang = v
 	}
 	c.LaunchAtLogin = f.LaunchAtLogin
+	if f.AutoUpdate != nil {
+		c.AutoUpdate = *f.AutoUpdate
+	}
 
 	if m := f.Memory; m != nil {
 		if m.Enabled != nil {

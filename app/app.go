@@ -72,6 +72,14 @@ type shell struct {
 
 	autoItem, memItem *mygo.MenuItem
 
+	// upd is where updating stands, and updItem the menu's way to finish
+	// one. relaunch stands in for restarting, in tests.
+	upd      updates
+	updItem  *mygo.MenuItem
+	relaunch func()
+	// quitting lets the panel close, which it otherwise only hides.
+	quitting bool
+
 	// logFile is the diagnostic log, empty when there is none.
 	logFile string
 
@@ -191,11 +199,15 @@ func Run() error {
 		})
 		allowBackgroundCursor()
 		s.win.OnClose(func(e *mygo.CloseEvent) {
+			if s.quitting {
+				return
+			}
 			e.PreventDefault()
 			s.hide()
 		})
 		s.registerShortcut(cfg.Shortcut)
 		s.makeTray()
+		s.startUpdates()
 		go s.watchConfig()
 		log.Printf("ready: %s", s.shortcut)
 		// The first run, or one that cannot work: the guide.
@@ -274,6 +286,8 @@ func (s *shell) makeTray() {
 		Click: func(it *mygo.MenuItem, _ *mygo.Window) { s.setOption(it.Checked, "routing", "enabled") }}
 	s.memItem = &mygo.MenuItem{Label: "记忆使用习惯", Type: mygo.MenuItemCheckbox, Checked: cfg.Memory.Enabled,
 		Click: func(it *mygo.MenuItem, _ *mygo.Window) { s.setOption(it.Checked, "memory", "enabled") }}
+	s.updItem = &mygo.MenuItem{Label: "重启以更新", Hidden: true,
+		Click: func(*mygo.MenuItem, *mygo.Window) { s.restartToUpdate() }}
 	var err error
 	s.tray, err = mygo.NewTray(mygo.TrayOptions{
 		ID:             "main",
@@ -281,6 +295,7 @@ func (s *shell) makeTray() {
 		IconIsTemplate: true,
 		ToolTip:        Name,
 		Menu: mygo.NewMenu([]*mygo.MenuItem{
+			s.updItem,
 			{Label: "关于 " + Name + " " + Version, Click: func(*mygo.MenuItem, *mygo.Window) { s.openPrefs(pageGeneral) }},
 			{Label: "设置…", Accelerator: "CmdOrCtrl+,", Click: func(*mygo.MenuItem, *mygo.Window) { s.openPrefs("") }},
 			{Type: mygo.MenuItemSeparator},

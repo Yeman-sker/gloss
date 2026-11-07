@@ -48,6 +48,7 @@
   "target_lang": "zh-Hans",
   "shortcut": "Alt+Shift+D",
   "launch_at_login": false,
+  "auto_update": true,
   "memory": {"enabled": true, "retention_days": 90, "max_records": 5000},
   "routing": {"enabled": true, "jev_service": "jev", "wait_ms": 800, "min_confidence": 0.6, "send_window_title": false},
   "actions": ["translate", "explain", "prompt", "agent"],
@@ -64,6 +65,7 @@
 | `services` | 模型服务。`api_key` 和 `model` 必填，缺少时面板会说明是哪个服务缺什么。`base_url` 写到版本号为止，默认 `https://api.openai.com/v1`。不内置默认模型 |
 | `default_service` | 功能没指定服务时用哪个。只有一个服务时可以省略 |
 | `shortcut` | 全局快捷键，默认 `Alt+Shift+D` |
+| `auto_update` | 启动后和每天检查一次新版本，默认开。关掉后仍可在设置 › 通用里手动检查 |
 | `memory` | 是否记录使用、保留天数、最多条数。托盘可以开关，设置里可以清空 |
 | `routing` | 是否自动选择功能；`jev_service` 为空时只用规则和记忆；`wait_ms` 是等 Jev 的上限；`min_confidence` 是采用 Jev 结果的最低把握；`send_window_title` 是否把窗口标题发给 Jev |
 | `actions` | 启用哪些功能及顺序，第一个是默认功能 |
@@ -79,19 +81,35 @@ macOS 上在 `~/Library/Logs/Gloss/gloss.log`（权限 0600），满 1 MB 时轮
 
 ## 发布
 
-目前发到私有仓库的 GitHub Release：ad-hoc 签名，不公证，没有自动更新。
+发到私有仓库的 GitHub Release，用负责人的 Apple Development 证书签名，不公证。从 0.1.3 起 Gloss 会自己更新，设计见[决策 0015](decisions/0015-updates-and-signing.md)。
+
+发布要在负责人的机器上做，需要三样东西：
+
+- **签名证书：** 钥匙串里的 Apple Development 证书（`security find-identity -v -p codesigning`）。`make app` 默认用它；没有证书时 `make app SIGN=-` 打 ad-hoc 包，但那种包更新后要重新授权辅助功能。
+- **更新私钥：** `~/Library/Application Support/mygo/update-keys/gloss/mygo-update.key`，公钥在 `mygo.json` 的 `updates.publicKey`。私钥不进仓库，要另外备份（比如密码管理器）：丢了它，已经装好的 Gloss 就再也收不到更新，只能手动重装。
+- **gh：** 已登录、能写 `Yeman-sker/gloss` 的 GitHub CLI。
+
+步骤：
 
 1. 改版本号：`app/prefs.go` 的 `Version` 和 `mygo.json`。
 2. `make check`，同步文档，提交到 main 并推送。
-3. 工作区干净时运行 `make app`，产物是 `build/darwin-arm64/gloss-<版本>-arm64.dmg`。
-4. 打 tag 并发布：`git tag -a v<版本> -m "Gloss <版本>"`，`git push origin v<版本>`，`gh release create v<版本> <dmg> --verify-tag --title "Gloss <版本>" --notes-file <说明>`。
-5. 用 `gh release download` 下载回来，核对校验和。
+3. 打 tag 并推送：`git tag -a v<版本> -m "Gloss <版本>"`，`git push origin v<版本>`。
+4. 工作区干净时运行 `make release`：构建并签名 Gloss.app，生成 DMG、更新包 `gloss-<版本>-darwin-arm64.tar.gz`（用更新私钥签名）和 `update-darwin-arm64.json`，上传到这个版本的草稿 Release，再删掉 mygo 生成的 `install.sh`（它不登录就下载，私有仓库用不了）。
+5. 写说明并发布：`gh release edit v<版本> --title "Gloss <版本>" --notes-file <说明> --draft=false`。发布之后，已安装的 Gloss 才看得到这个版本。
+6. 用 `gh release download` 把 DMG 下载回来，核对 `SHA256SUMS`。
+
+已安装的 Gloss（0.1.3 起）怎么更新：
+
+- 启动 30 秒后和之后每天检查一次，失败后一小时再试。设置 › 通用 › 更新 可以手动检查，高级里可以关掉自动检查（`auto_update`）。
+- 用本机 gh 的登录读 Release（`gh auth token`）。没装 gh、没登录、或账号看不到仓库时，设置里会写明原因。
+- 找到新版本就在后台下载，用 `mygo.json` 里的公钥校验后暂存。托盘菜单最上面出现“重启以更新到 x.y.z”，设置里出现“重启以更新”。不点也行，Gloss 下次退出时会替换。
+- 只看最新的正式 Release，草稿和预发布都不看。没有增量包，每次下载整包（约 10 MB）：mygo 做增量要不登录读上一版的清单，私有仓库读不到。
 
 试下载版之前：
 
 - **先停掉开发版。** `mygo dev` 的 `Gloss Dev` 和正式版单实例锁不同，能同时运行，都报告 `ready` 而不提示冲突，但抢同一个快捷键，共用配置和记忆文件。
-- **Gatekeeper。** 浏览器下载的文件带隔离属性，装好后运行 `xattr -dr com.apple.quarantine /Applications/Gloss.app`。`gh release download` 下载的不带。
-- **辅助功能权限。** ad-hoc 签名的每个构建身份不同。如果开关开着却提示没有权限，把列表里的 Gloss 删掉重新添加（推测，未测）。
+- **Gatekeeper。** 浏览器下载的文件带隔离属性，装好后运行 `xattr -dr com.apple.quarantine /Applications/Gloss.app`。`gh release download` 下载的和 Gloss 自己更新的都不带。
+- **辅助功能权限。** 授权跟着签名身份走。0.1.2 及以前是 ad-hoc 签名，每个构建身份都不同；换成 0.1.3 时要把列表里旧的 Gloss 删掉，重新添加一次。之后用同一张证书签名的版本应该能沿用授权（按 TCC 的规则推断，0.1.3 之后的第一次更新时验证）。
 
 ## 规划（Linear）
 
