@@ -3,9 +3,11 @@ package app
 import (
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/editor"
@@ -15,42 +17,50 @@ import (
 )
 
 const (
-	iconCopySVG = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="5.5" width="8" height="8" rx="2"/><path d="M3.5 10.5h-.2a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v.2"/></svg>`
+	iconCopySVG  = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="5.5" width="8" height="8" rx="2"/><path d="M3.5 10.5h-.2a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v.2"/></svg>`
+	iconCheckSVG = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg>`
 )
 
 var (
 	iconCopy  = ui.MustParseSVG([]byte(iconCopySVG))
-	iconCheck = checkIcon(1)
+	iconCheck = ui.MustParseSVG([]byte(iconCheckSVG))
 )
 
-// checkIcon is the check drawn along its stroke as far as q, from 0 to 1.
-func checkIcon(q float64) *ui.SVG {
-	const first, second = 4.53, 9.69
-	along := q * (first + second)
-	path := "M3 8.5L"
-	if along <= first {
-		t := along / first
-		path += fmt.Sprintf("%.2f %.2f", 3+3.2*t, 8.5+3.2*t)
-	} else {
-		t := (along - first) / second
-		path += fmt.Sprintf("6.2 11.7L%.2f %.2f", 6.2+6.8*t, 11.7-6.9*t)
-	}
-	return ui.MustParseSVG([]byte(`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="` + path + `"/></svg>`))
-}
-
-// chunk is a piece of a block, fading in from when it was released.
+// chunk is a piece of a block, fading in from when it was released. brk says a
+// new paragraph starts after it.
 type chunk struct {
 	text string
 	at   time.Time
+	brk  bool
 }
 
-// block paces what the network sends: pending waits, young fades in,
-// settled has arrived.
+// block paces what the network sends: pending waits, young fades in, settled
+// has arrived. Finished paragraphs are their own elements, so that only the one
+// being written lays out again each frame, however long the text gets.
 type block struct {
 	kind    core.BlockKind
+	paras   []string
 	settled strings.Builder
 	young   []chunk
 	pending []rune
+}
+
+// whole is the block's text as it has come, paced or not.
+func (b *block) whole() string {
+	var out strings.Builder
+	for _, para := range b.paras {
+		out.WriteString(para)
+		out.WriteString("\n\n")
+	}
+	out.WriteString(b.settled.String())
+	for _, ch := range b.young {
+		out.WriteString(ch.text)
+		if ch.brk {
+			out.WriteString("\n\n")
+		}
+	}
+	out.WriteString(string(b.pending))
+	return out.String()
 }
 
 // springKey keeps a surface's springs apart from the last time it showed.
@@ -104,27 +114,29 @@ type panel struct {
 	natural     float32 // the content's height last frame
 	maxHeight   float32
 	maxReading  float32
+	below       float32 // from the surface's top to the bottom of the screen
+	screenW     float32
 	anchor      float32 // where the surface grows from, in from its left edge
 	lastFrame   time.Time
-	releasing   float64
-	hadSel      bool
-	wasPress    bool
 	justEntered bool
-	selected    bool
-	pressMoved  bool
 	givingWay   bool
 	idleSince   time.Time
 	doneAt      time.Time
 	openedAt    time.Time
 	heightTo    float32
-	measured    float32
-	measuredN   int
-	pressText   bool
-	pressGlyphs bool
-	pressX      int
-	pressY      int
+	// held says the mouse button is down on the panel. A selection being made
+	// would slide under the pointer if the text scrolled meanwhile.
+	held bool
 
-	cursor func() (int, int)
+	// The plan for the frame, once the run's first text has told enough; until
+	// then the result waits and the panel looks as it did. See settle.
+	planned bool
+	plan    layoutPlan
+	firstAt time.Time
+	widthTo float32
+	cjk     bool
+	pace    pacer
+	mdAt    mdCursor
 
 	// The features, the one running, how it was chosen and why, and what
 	// it gives: text, or Markdown that streams into md.
@@ -139,22 +151,26 @@ type panel struct {
 	// index in the document.
 	codeCopied map[int]time.Time
 	// reading is the layout for long or structured results: wider, taller,
-	// the source folded, following the end while it streams.
+	// the source folded. The plan decides it, once for each run.
 	reading    bool
 	sourceOpen bool
 	scroll     ui.ScrollState
 	following  bool
+	followed   float32 // where following last headed for
+	// picked is the text selected in the result, as of the last frame.
+	picked     string
 	status     string
 	statusTone ui.Color
 	statusAt   time.Time
 	footerTop  float32
-	mdTop      float32
 	// animating says this frame asked for the next: a gap before it is a
 	// dropped frame, not the panel at rest.
 	animating bool
 
 	wantCursor ui.Cursor
-	inCopy     bool
+	// textBox is the selectable text, where a press selects rather than moves
+	// the panel, as the last frame laid it out.
+	textBox ui.Rect
 	// What the pointer is on, found by the panel itself: see hover. spots are
 	// the things it can be on, as the last frame laid them out.
 	hot      string
@@ -164,8 +180,8 @@ type panel struct {
 	tipping  bool
 	tipGone  time.Time
 	surfaceW float32
-	textTop  float32
 	local    func() (float32, float32)
+	clock    func() time.Time
 	closed   func()
 	copied   func(*ui.Context, string)
 	copyText func() string
@@ -174,7 +190,16 @@ type panel struct {
 	explain  func(error) (msg, fix string, do func())
 	switchTo func(id string)
 	replace  func()
-	frame    func(c *ui.Context, curW, curH, wantW, wantH float32, pressed, overText bool)
+	frame    func(c *ui.Context, curW, curH, wantW, wantH float32, pressed bool)
+}
+
+// now is the panel's clock: the system's, or a test's, kept in step with the
+// frames it drives.
+func (p *panel) now() time.Time {
+	if p.clock != nil {
+		return p.clock()
+	}
+	return time.Now()
 }
 
 // reset starts the panel over for a new selection.
@@ -183,11 +208,10 @@ func (p *panel) reset(source string) {
 	p.word = isWord(source)
 	p.notice = ""
 	p.capsule, p.closing = true, false
-	p.natural, p.heightTo = heightCapsule, heightCapsule
-	p.measured, p.measuredN = 0, -1
-	p.givingWay, p.pressMoved = false, false
+	p.natural, p.heightTo, p.widthTo = heightCapsule, heightCapsule, 0
+	p.givingWay = false
 	p.openedAt = time.Time{}
-	p.shownAt = time.Now()
+	p.shownAt = p.now()
 	p.current, p.by, p.why = "", "", ""
 	p.reading, p.sourceOpen = false, false
 	p.scroll = ui.ScrollState{}
@@ -201,11 +225,11 @@ func (p *panel) clearRun() {
 	p.codeCopied = nil
 	p.netDone, p.done = false, false
 	p.doneAt, p.copiedAt = time.Time{}, time.Time{}
-	p.releasing = 0
-	p.selected, p.pressText, p.wasPress = false, false, false
+	p.planned, p.plan, p.firstAt = false, layoutPlan{}, time.Time{}
+	p.pace, p.mdAt = pacer{}, mdCursor{}
+	p.picked = ""
 	p.status = ""
-	p.following = true
-	p.measuredN = -1
+	p.following, p.followed = true, 0
 }
 
 // beginRun shows a feature starting on the source: a fresh result, which
@@ -216,38 +240,33 @@ func (p *panel) beginRun(run uint64, f feature, by, why string, kind core.BlockK
 	p.current, p.by, p.why = f.id, by, why
 	p.failedTitle = f.name + "失败"
 	p.output, p.replaceable = kind, replaceable
-	p.reading = kind == core.BlockMarkdown
 	p.scroll = ui.ScrollState{}
-	p.shownAt = time.Now()
+	p.shownAt = p.now()
 }
 
 // showNotice turns the panel into a short message.
 func (p *panel) showNotice(text string) {
 	p.reset("")
 	p.notice = text
-	p.noticeAt = time.Now()
+	p.noticeAt = p.now()
 	p.done = true
 }
 
 // waiting says the panel is open and its run has shown nothing yet.
 func (p *panel) waiting() bool {
-	return !p.capsule && p.notice == "" && p.failed == "" && len(p.blocks) == 0 && p.md == "" && !p.done
+	return !p.capsule && p.notice == "" && p.failed == "" && !p.planned && !p.done
 }
 
 // apply takes an event of the shell's current run, on the main thread.
 func (p *panel) apply(ev core.Event) {
 	switch ev.Type {
 	case core.EventDelta:
-		if p.capsule {
-			p.openedAt = time.Now()
+		if p.firstAt.IsZero() {
+			p.firstAt = p.now()
 		}
-		p.capsule = false
-		p.idleSince = time.Now()
+		p.idleSince = p.now()
 		if ev.Kind == core.BlockMarkdown {
 			p.md += ev.Delta
-			if len([]rune(p.md)) > 600 || strings.Count(p.md, "\n") > 6 {
-				p.reading = true
-			}
 			return
 		}
 		for len(p.blocks) <= ev.Index {
@@ -255,18 +274,11 @@ func (p *panel) apply(ev core.Event) {
 		}
 		b := p.blocks[ev.Index]
 		b.pending = append(b.pending, []rune(ev.Delta)...)
-		if p.blocks[0].settled.Len()+len(p.blocks[0].pending) > 600 {
-			p.reading = true
-		}
 	case core.EventDone:
 		p.netDone = true
-		if p.md != "" {
-			// Markdown paces itself: the result is complete now.
-			p.done, p.doneAt = true, time.Now()
-		}
 		if len(p.blocks) == 0 && p.md == "" {
-			p.capsule, p.done = false, true
-			p.openedAt = time.Now()
+			p.capsule, p.done, p.doneAt = false, true, p.now()
+			p.openedAt = p.now()
 		}
 	case core.EventError:
 		p.failed = ev.Err.Error()
@@ -274,39 +286,88 @@ func (p *panel) apply(ev core.Event) {
 			p.failed, p.fix, p.fixDo = p.explain(ev.Err)
 		}
 		p.capsule, p.done, p.netDone = false, true, true
-		p.openedAt = time.Now()
+		p.doneAt = p.now()
+		p.openedAt = p.now()
+		p.flush(p.doneAt)
 	}
+}
+
+// measureFunc is how wide text sets on one line.
+type measureFunc func(text, font string, size float32) float32
+
+// settle decides the frame once the run has told enough: all of it, for a short
+// result; otherwise what has come within planWait of the first text, which is
+// not noticed in a capsule already waiting on the network. Nothing shows before,
+// so the text never has to wrap again for a width that changed, nor the source
+// fold under it, and the panel opens once, to about the right size.
+func (p *panel) settle(measure measureFunc, now time.Time) {
+	if p.planned || p.notice != "" || (p.firstAt.IsZero() && !p.netDone) {
+		return
+	}
+	got := p.received()
+	if !p.netDone && now.Sub(p.firstAt) < planWait && utf8.RuneCountInString(got) < planEnough {
+		return
+	}
+	p.cjk = isCJK(got) || isCJK(p.source)
+	font, size := fontText, sizeBody
+	if p.cjk {
+		font = fontTextCJK
+	}
+	if p.word {
+		size = sizeWord
+	}
+	in := planInput{
+		source: p.source, output: p.output, result: got, ended: p.netDone,
+		low: p.lowWidth(), screenW: p.screenWidth(), most: p.mostHeight(),
+	}
+	// Only what may end up on one line is worth measuring exactly.
+	if em(p.source)*sizeSource < 2*widthPanel {
+		in.sourceW = measure(p.source, sourceFont(p.source), sizeSource)
+	}
+	if em(got)*size < 2*widthPanel {
+		in.resultW = measure(got, font, size)
+	}
+	p.plan, p.planned = planLayout(in), true
+	p.reading = p.plan.reading
+	p.widthTo = p.plan.width
+	p.heightTo = max(p.plan.height, heightCapsule)
+	if p.capsule {
+		p.capsule = false
+		p.openedAt = now
+	}
+	p.idleSince = now
+}
+
+// received is the result so far, whether or not it has shown.
+func (p *panel) received() string {
+	if p.md != "" {
+		return p.md
+	}
+	var out strings.Builder
+	for _, b := range p.blocks {
+		if b.kind == core.BlockText {
+			out.WriteString(b.whole())
+		}
+	}
+	return out.String()
 }
 
 // setStatus shows how a replace went, over the footer: see statusView.
 func (p *panel) setStatus(text string, tone ui.Color) {
-	p.status, p.statusTone, p.statusAt = text, tone, time.Now()
+	p.status, p.statusTone, p.statusAt = text, tone, p.now()
 }
 
-// release lets pending text out at a pace that catches up with long gaps
-// and hides the bursts of a stream.
+// release lets out what the plan is ready for, at the pacer's speed.
 func (p *panel) release(now time.Time) {
 	dt := min(now.Sub(p.lastFrame).Seconds(), 0.25)
 	p.lastFrame = now
-	total := 0
-	for _, b := range p.blocks {
-		total += len(b.pending)
+	if !p.planned {
+		return
 	}
-	if total > 0 {
-		p.releasing += paceRate(total) * dt
-		p.idleSince = now
-	}
-	for _, b := range p.blocks {
-		for p.releasing >= 1 && len(b.pending) > 0 {
-			p.releasing--
-			n := tokenLen(b.pending)
-			b.young = append(b.young, chunk{string(b.pending[:n]), now})
-			b.pending = b.pending[n:]
-		}
-		for len(b.young) > 0 && now.Sub(b.young[0].at) >= fadeText {
-			b.settled.WriteString(b.young[0].text)
-			b.young = b.young[1:]
-		}
+	if p.md != "" {
+		p.releaseMarkdown(dt)
+	} else {
+		p.releaseBlocks(dt, now)
 	}
 	if p.netDone && !p.done && p.drained() {
 		p.done = true
@@ -314,7 +375,82 @@ func (p *panel) release(now time.Time) {
 	}
 }
 
+func (p *panel) releaseMarkdown(dt float64) {
+	backlog := utf8.RuneCountInString(p.md[p.mdAt.at:])
+	budget := p.pace.step(backlog, p.netDone, dt)
+	for budget > 0 {
+		n := p.mdAt.next(p.md, p.netDone)
+		if n == 0 {
+			break
+		}
+		budget -= n
+	}
+	if budget < 0 {
+		p.pace.overdraw(-budget)
+	}
+}
+
+func (p *panel) releaseBlocks(dt float64, now time.Time) {
+	backlog := 0
+	for _, b := range p.blocks {
+		backlog += len(b.pending)
+	}
+	if backlog > 0 {
+		p.idleSince = now
+	}
+	budget := p.pace.step(backlog, p.netDone, dt)
+	for _, b := range p.blocks {
+		for budget > 0 && len(b.pending) > 0 {
+			n := tokenLen(b.pending, p.netDone)
+			if n == 0 {
+				break
+			}
+			budget -= n
+			b.young = append(b.young, newChunk(string(b.pending[:n]), now))
+			b.pending = b.pending[n:]
+		}
+		for len(b.young) > 0 && now.Sub(b.young[0].at) >= fadeReveal {
+			ch := b.young[0]
+			b.young = b.young[1:]
+			b.settled.WriteString(ch.text)
+			if ch.brk {
+				b.paras = append(b.paras, b.settled.String())
+				b.settled.Reset()
+			}
+		}
+	}
+	if budget < 0 {
+		p.pace.overdraw(-budget)
+	}
+}
+
+// flush lets out all that has come, at once: a run that failed has nothing left
+// to pace, and no frame may come to let out the rest.
+func (p *panel) flush(now time.Time) {
+	p.mdAt.at = len(p.md)
+	for _, b := range p.blocks {
+		for len(b.pending) > 0 {
+			n := max(tokenLen(b.pending, true), 1)
+			b.young = append(b.young, newChunk(string(b.pending[:n]), now))
+			b.pending = b.pending[n:]
+		}
+	}
+}
+
+// newChunk takes a token as it left the pacer: the blank lines that end one are
+// the gap to the next paragraph.
+func newChunk(text string, at time.Time) chunk {
+	trimmed := strings.TrimRight(text, " \t\n")
+	if strings.Count(text[len(trimmed):], "\n") >= 2 {
+		return chunk{text: trimmed, at: at, brk: true}
+	}
+	return chunk{text: text, at: at}
+}
+
 func (p *panel) drained() bool {
+	if p.mdAt.at < len(p.md) {
+		return false
+	}
 	for _, b := range p.blocks {
 		if len(b.pending) > 0 || len(b.young) > 0 {
 			return false
@@ -323,21 +459,27 @@ func (p *panel) drained() bool {
 	return true
 }
 
-// paceRate is how many tokens a second leave a backlog of n runes.
-func paceRate(n int) float64 {
-	return max(rateMin, min(rateMax, float64(n)/0.3))
-}
-
-// tokenLen keeps a Latin word whole; other text goes a rune at a time.
-func tokenLen(r []rune) int {
-	if !isLatin(r[0]) {
-		return 1
-	}
+// tokenLen is how many runes go out together: a Latin word whole, other text a
+// rune at a time, and the white space after them, so that a line never ends on
+// the screen before its next begins. Line ends wait for what comes after them
+// unless final says nothing will: only then is it known how many there are.
+func tokenLen(r []rune, final bool) int {
 	n := 1
-	for n < len(r) && (isLatin(r[n]) || r[n] == '\'' || r[n] == '-') {
-		n++
+	if isLatin(r[0]) {
+		for n < len(r) && (isLatin(r[n]) || r[n] == '\'' || r[n] == '-') {
+			n++
+		}
+	} else if unicode.IsSpace(r[0]) {
+		n = 0
 	}
-	return n
+	end := n
+	for end < len(r) && unicode.IsSpace(r[end]) {
+		end++
+	}
+	if end == len(r) && !final && slices.Contains(r[n:end], '\n') {
+		return n
+	}
+	return end
 }
 
 func isLatin(r rune) bool { return r < 0x250 && unicode.IsLetter(r) }
@@ -388,51 +530,35 @@ func clampWidth(w, low, high float32) float32 {
 	return max(low, min(high, float32(math.Ceil(float64(w)))))
 }
 
-// all is the translation with what is still on its way: the panel widens for
-// the text it knows about, up to a line length that reads well.
-func (p *panel) all() string {
-	var out strings.Builder
-	for _, b := range p.blocks {
-		if b.kind != core.BlockText {
-			continue
-		}
-		out.WriteString(b.settled.String())
-		for _, ch := range b.young {
-			out.WriteString(ch.text)
-		}
-		out.WriteString(string(b.pending))
+// lowWidth is the narrowest the panel may be: a footer of features needs room.
+func (p *panel) lowWidth() float32 {
+	if len(p.features) > 1 {
+		return widthMinFooter
 	}
-	return out.String()
+	return widthMinPanel
 }
 
-func (p *panel) width(c *ui.Context) float32 {
-	if p.reading {
-		return widthReading
+// screenWidth is the widest the screen leaves for the panel, unbounded until the
+// shell has said.
+func (p *panel) screenWidth() float32 {
+	if p.screenW > 0 {
+		return p.screenW
 	}
-	low := widthMinPanel
-	if p.footer() {
-		low = widthMinFooter
+	return widthWide
+}
+
+// width is the plan's, or the narrowest until there is one.
+func (p *panel) width() float32 {
+	if p.widthTo > 0 {
+		return p.widthTo
 	}
-	text := p.all()
-	if n := len(text); n != p.measuredN {
-		size := sizeBody
-		if p.word {
-			size = sizeWord
-		}
-		font := fontText
-		if isCJK(text) {
-			font = fontTextCJK
-		}
-		p.measuredN = n
-		p.measured = max(measure(c, text, font, size), measure(c, p.source, sourceFont(p.source), sizeSource))
-	}
-	return clampWidth(p.measured+34, low, widthPanel)
+	return p.lowWidth()
 }
 
 // footer says whether the panel shows its footer: the features to switch
 // to, and what can be done with the result.
 func (p *panel) footer() bool {
-	return !p.capsule && p.notice == "" && (len(p.features) > 1 || p.replaceable || p.output == core.BlockMarkdown)
+	return !p.capsule && p.notice == "" && (len(p.features) > 1 || p.failed == "")
 }
 
 func (p *panel) footerHeight() float32 {
@@ -442,12 +568,30 @@ func (p *panel) footerHeight() float32 {
 	return 0
 }
 
-// limit is how tall the surface may grow.
+// mostHeight is how tall the plan may make the content: what the screen allows,
+// wherever on it the panel is, as the panel can still move to make the room.
+func (p *panel) mostHeight() float32 {
+	return max(p.maxHeight, p.maxReading, heightCapsule)
+}
+
+// limit is how tall the surface may grow: the screen's share, and short of that
+// the room below it. It moves up for what the plan said, and if the text outgrows
+// that, until there is a page to read; then it stays where it is and the text
+// scrolls, as a panel climbing the screen moves the line being read. A panel
+// moved by hand stays where it was put.
 func (p *panel) limit() float32 {
+	most := p.maxHeight
 	if p.reading {
-		return p.maxReading
+		most = p.maxReading
 	}
-	return p.maxHeight
+	if p.below > 0 {
+		least := planRoomReading + p.footerHeight()
+		if p.pinned {
+			least = pinnedLeast
+		}
+		most = min(most, max(p.below, least))
+	}
+	return most
 }
 
 // target is the size the surface is heading for.
@@ -458,9 +602,9 @@ func (p *panel) target(c *ui.Context) (float32, float32) {
 	case p.capsule:
 		return capsuleWidth(c, p.source), heightCapsule
 	case p.failed != "":
-		return max(capsuleWidth(c, p.source), widthError, min(p.width(c), widthPanel)), min(p.heightTo+p.footerHeight(), p.limit())
+		return max(capsuleWidth(c, p.source), widthError, min(p.width(), widthPanel)), min(p.heightTo+p.footerHeight(), p.limit())
 	}
-	return p.width(c), min(p.heightTo+p.footerHeight(), p.limit())
+	return p.width(), min(p.heightTo+p.footerHeight(), p.limit())
 }
 
 // follow lets the height grow with the text at once, and shrink only at the
@@ -471,7 +615,11 @@ func (p *panel) follow() {
 	}
 }
 
+// text is what copying takes: what is selected in the result, or all of it.
 func (p *panel) text() string {
+	if p.picked != "" {
+		return p.picked
+	}
 	if p.copyText != nil {
 		if t := p.copyText(); t != "" {
 			return t
@@ -480,20 +628,57 @@ func (p *panel) text() string {
 	if p.md != "" {
 		return p.md
 	}
-	var out []string
-	for _, b := range p.blocks {
-		if b.kind == core.BlockText {
-			out = append(out, b.settled.String())
-		}
+	return p.received()
+}
+
+// followEnd keeps the end of a stream in view once the text has outgrown the
+// panel, and not before. viewH is the height the text will have when the surface
+// gets where it is going: while it grows, its height is behind its content for a
+// few frames, and following the content then made the text hop up by a line and
+// slide back, each line. A wheel ends the following, and scrolling back down to
+// the end starts it again. It goes on a moment past the end, as the last piece
+// has yet to be measured when the run is done; after that the text is the user's,
+// who may open the source above it without being scrolled away. A press stops the
+// text where it is, for the selection it may start.
+func (p *panel) followEnd(viewH float32) {
+	if p.closing {
+		return
 	}
-	return strings.Join(out, "\n")
+	at, most := p.scroll.Y, p.scroll.MaxY
+	if p.held && p.following && p.scroll.Scrolling() {
+		p.followed = at
+		// Any spring would carry on with the glide's speed.
+		p.scroll.ScrollTo(0, at, ui.Animation{Duration: time.Nanosecond})
+		return
+	}
+	if p.done && p.now().Sub(p.doneAt) >= fadeNib {
+		return
+	}
+	if p.following && !p.scroll.Scrolling() && at < min(p.followed, most)-1 {
+		p.following = false
+	}
+	if !p.following {
+		p.following = most > 0 && at >= most-1
+	}
+	if !p.following || p.held {
+		return
+	}
+	over := p.natural - viewH
+	if over < 0.5 {
+		over = 0 // the two may differ by a rounding: that is not overflowing
+	}
+	if over != p.followed {
+		p.followed = over
+		p.scroll.ScrollTo(0, over, ui.Animation{Spring: motionFollow})
+	}
 }
 
 // view builds the frame: a clear root, with the surface in it.
 func (p *panel) view() func(*ui.Context) {
 	return func(c *ui.Context) {
-		now := time.Now()
+		now := p.now()
 		reduce := c.Preferences().ReduceMotion
+		p.settle(func(text, font string, size float32) float32 { return measure(c, text, font, size) }, now)
 		p.release(now)
 		p.follow()
 		p.track()
@@ -501,50 +686,64 @@ func (p *panel) view() func(*ui.Context) {
 		c.SetTheme(inkTheme(c.Theme()))
 		root := c.Root().Background(ui.Transparent)
 
+		// The content keeps the width it was laid out for while the surface
+		// folds around it on the way out: rewrapped, it would swim.
 		wantW, wantH := p.target(c)
-		motion := motionStream
-		if p.capsule || p.notice != "" || (!p.done && now.Sub(p.openedAt) < 400*time.Millisecond) {
-			motion = motionGrow
+		contentW := wantW
+		if p.closing {
+			wantW, wantH = min(capsuleWidth(c, p.source), wantW), heightCapsule
 		}
-		w := root.Spring(springKey{"w", p.gen}, wantW, motionGrow)
-		h := root.Spring(springKey{"h", p.gen}, wantH, motion)
-		r := radiusCapsule
-		if !p.capsule && p.notice == "" {
-			r = radiusPanel
-		}
-		radius := root.Spring(springKey{"r", p.gen}, r, motionGrow)
-
-		opacity, fadeFor := float32(1), 80*time.Millisecond
+		motion, motionW := motionStream, motionGrow
 		switch {
 		case p.closing:
-			opacity, fadeFor = 0, exitTime
+			motion, motionW = motionExit, motionExit
+		case p.capsule || p.notice != "" || (!p.done && now.Sub(p.openedAt) < 400*time.Millisecond):
+			motion = motionGrow
+		}
+		w := root.Spring(springKey{"w", p.gen}, wantW, motionW)
+		h := root.Spring(springKey{"h", p.gen}, wantH, motion)
+		r := radiusCapsule
+		if !p.capsule && p.notice == "" && !p.closing {
+			r = radiusPanel
+		}
+		radius := root.Spring(springKey{"r", p.gen}, r, motionW)
+
+		fade := ui.Animation{Duration: 80 * time.Millisecond}
+		opacity := float32(1)
+		switch {
+		case p.closing:
+			// The surface stays for the fold, and goes with its end.
+			opacity, fade = 0, ui.Animation{Duration: exitTime - exitFade, Delay: exitFade}
 		case !p.entered:
 			opacity = 0
 		case p.givingWay:
-			opacity, fadeFor = 0.32, 140*time.Millisecond
+			opacity, fade = 0.32, ui.Animation{Duration: 140 * time.Millisecond}
 		}
-		alpha := root.AnimateTo(springKey{"fade", p.gen}, opacity, ui.Animation{Duration: fadeFor})
+		alpha := root.AnimateTo(springKey{"fade", p.gen}, opacity, fade)
+		contentAlpha := root.AnimateTo(springKey{"content", p.gen}, b2f32(!p.closing), ui.Animation{Duration: exitFade})
+
+		// Lifted by its shadow: scaling a surface full of text costs tens of
+		// milliseconds a frame (measured), and this has to follow the hand.
+		lift := root.Spring(springKey{"lift", p.gen}, b2f32(p.dragging), motionPress)
 
 		// The shadow lives outside the clip, the content inside it.
 		surface := ui.Box(c).Key(fmt.Sprintf("surface-%d", p.gen)).Absolute().Left(margin).Top(margin).
 			Width(w).Height(h).Radius(radius).Background(colorSurface).
-			Shadow(0, 14, 36, -6, colorShadow).Shadow(0, 2, 6, 0, colorContact).
+			Shadow(0, 14+8*lift, 36+14*lift, -6, colorShadow).Shadow(0, 2, 6, 0, colorContact).
 			InsetShadow(0, 0, 0, 1, colorRim).
 			Opacity(alpha).TransformOrigin(min(1, max(0, p.anchor/max(w, 1))), 0).Cursor(p.wantCursor)
 
-		// The selection is this frame's element: mygo's elements do not
-		// outlive the build that made them.
-		var inner, translation, selection, mdView ui.Element
+		// What the text is, this frame: mygo's elements do not outlive the
+		// build that made them.
+		var inner, text ui.Element
 		foot := p.footerHeight()
+		viewH := max(0, h-foot)
+		p.followEnd(max(0, wantH-foot))
 		surface.Children(func() {
-			ui.Column(c).Key("frame").Width(w).Height(h).Radius(radius).Clip().Children(func() {
-				// Follow the end while it streams, unless the user scrolled up.
-				if p.reading && p.following && !p.done && p.scroll.MaxY > 0 {
-					p.scroll.Y = math.MaxFloat32
-				}
-				clip := ui.Scroll(c).Key("clip").Scrollbars(false).TrackScroll(&p.scroll).Width(w).Height(max(0, h-foot))
+			ui.Column(c).Key("frame").Width(w).Height(h).Radius(radius).Clip().Opacity(contentAlpha).Children(func() {
+				clip := ui.Scroll(c).Key("clip").Scrollbars(false).TrackScroll(&p.scroll).Width(w).Height(viewH)
 				clip.Children(func() {
-					inner = ui.Column(c).Key("inner").Width(wantW).Padding(paddingY, paddingX).Gap(gapGroup)
+					inner = ui.Column(c).Key("inner").Width(contentW).Padding(paddingY, paddingX).Gap(gapGroup)
 					inner.Children(func() {
 						if p.notice != "" {
 							p.noticeRow(c)
@@ -552,52 +751,40 @@ func (p *panel) view() func(*ui.Context) {
 						}
 						p.sourceRow(c, now, reduce)
 						if p.md != "" {
-							mdView = p.markdownView(c)
+							if p.planned {
+								text = p.markdownView(c)
+							}
 						} else {
-							translation, selection = p.blocksView(c, now)
+							text = p.blocksView(c, now)
 						}
 						if p.failed != "" {
-							p.failure(c)
+							text = p.failure(c)
 						}
 					})
 				})
 				if foot > 0 {
 					p.footerRow(c, w, now)
 				}
+				p.scrollEdges(c, w, viewH)
 			})
-			p.corner(c, now)
 			p.pinDot(c, surface)
 			p.toEnd(c, w, h-foot)
 			p.statusView(c, now, w, foot)
 			p.tipView(c, now, w, h)
 		})
-		if p.scroll.MaxY > 0 && p.scroll.Y < p.scroll.MaxY-4 && !p.scroll.Scrolling() {
-			p.following = false
-		} else if p.scroll.MaxY > 0 && p.scroll.Y >= p.scroll.MaxY-1 {
-			p.following = true
-		}
 
-		pressedCopy := p.copyOnClick(c, surface, translation, selection, p.cursor, now)
-		overText := selection.Hovered() || mdView.Hovered()
-		pressed := surface.Pressed() && !translation.Pressed() && !selection.Pressed() && !mdView.Pressed() && !p.overFooter()
+		pressed := surface.Pressed() && !p.overFooter()
 		if p.closing && alpha <= 0.01 && p.closed != nil {
 			p.closed()
 		}
 		scale := float32(1)
 		anim := ui.Animation{Spring: motionRelease}
+		// Only the capsule scales, with next to no text on it.
 		switch {
-		case p.closing:
-			scale, anim = scaleExit, ui.Animation{Spring: ui.SpringOptions{Duration: exitTime * 14 / 10}}
 		case !p.entered:
 			scale, anim = scaleFrom, ui.Animation{Spring: motionPop}
 		case p.justEntered:
 			anim = ui.Animation{Spring: motionPop}
-		case p.givingWay:
-			scale, anim = scaleGiveWay, ui.Animation{Spring: motionPress}
-		case p.dragging:
-			scale, anim = scaleLifted, ui.Animation{Spring: motionPress}
-		case pressedCopy && p.done && p.failed == "" && !p.hadSel && !p.pressMoved:
-			scale, anim = scalePressed, ui.Animation{Spring: motionPress}
 		}
 		surface.AnimatePose(ui.Pose{Scale: scale, X: p.shake(now, reduce)}, anim)
 		p.justEntered = false
@@ -606,20 +793,16 @@ func (p *panel) view() func(*ui.Context) {
 			c.Invalidate()
 		}
 
-		p.surfaceW, p.textTop, p.mdTop = w, 0, 0
-		if b := mdView.Bounds(); b.H > 0 {
-			p.mdTop = max(1, b.Y-margin)
-		}
+		p.surfaceW, p.textBox = w, text.Bounds()
 		p.footerTop = h - foot
-		if b := selection.Bounds(); p.failed == "" && len(p.blocks) > 0 && b.H > 0 {
-			p.textTop = max(1, b.Y-margin-gapGroup/2)
-		}
-		if b := inner.Bounds(); b.H > 0 && b.H != p.natural {
+		p.picked = p.pickedText(text)
+		// Before transforms: a pose must not read as text that grew.
+		if b := inner.LayoutBounds(); b.H > 0 && b.H != p.natural {
 			p.natural = b.H
 			c.Invalidate()
 		}
 		if p.frame != nil {
-			p.frame(c, w, h, wantW, wantH, pressed, overText)
+			p.frame(c, w, h, wantW, wantH, pressed)
 		}
 		p.animating = p.busy(now) || abs32(w-wantW) > 0.5 || abs32(h-wantH) > 0.5
 		if p.busy(now) {
@@ -627,6 +810,62 @@ func (p *panel) view() func(*ui.Context) {
 		}
 	}
 }
+
+// pickedText is what the user selected in the result, if anything. An element
+// that was not built this frame has no selection to report.
+func (p *panel) pickedText(e ui.Element) string {
+	if e == (ui.Element{}) {
+		return ""
+	}
+	var parts []string
+	for _, part := range e.SelectedTexts() {
+		runes := []rune(part.Text)
+		from, to := min(part.Start, len(runes)), min(part.End, len(runes))
+		if from < to {
+			parts = append(parts, string(runes[from:to]))
+		}
+	}
+	if len(parts) < 2 {
+		return strings.Join(parts, "")
+	}
+	src := p.md
+	if src == "" {
+		src = p.received()
+	}
+	return joinPicked(parts, src)
+}
+
+// joinPicked puts selected paragraphs back together as they stand in the source:
+// cells of a row with tabs, paragraphs with a blank line. The view only says which
+// paragraphs they are, so they are looked for in the source, with the marks that
+// do not show set aside; one that is not found joins with a newline. A part found
+// early, in a longer line, at worst gets a blank line for a newline.
+func joinPicked(parts []string, src string) string {
+	src = inlineMarks.Replace(src)
+	var out strings.Builder
+	at := 0
+	for i, part := range parts {
+		key := inlineMarks.Replace(part)
+		sep := "\n"
+		if idx := strings.Index(src[at:], key); idx >= 0 {
+			between := src[at : at+idx]
+			switch {
+			case strings.Contains(between, "\n\n"):
+				sep = "\n\n"
+			case !strings.Contains(between, "\n") && strings.Contains(between, "|"):
+				sep = "\t"
+			}
+			at += idx + len(key)
+		}
+		if i > 0 {
+			out.WriteString(sep)
+		}
+		out.WriteString(part)
+	}
+	return out.String()
+}
+
+var inlineMarks = strings.NewReplacer("*", "", "_", "", "`", "", "~", "")
 
 // overFooter says the pointer is on the footer, whose presses are its
 // buttons' and do not move the panel.
@@ -639,14 +878,10 @@ func (p *panel) overFooter() bool {
 }
 
 func (p *panel) busy(now time.Time) bool {
-	if !p.done || now.Sub(p.doneAt) < fadeNib || (!p.copiedAt.IsZero() && now.Sub(p.copiedAt) < 1500*time.Millisecond) {
+	if !p.done || now.Sub(p.doneAt) < fadeNib {
 		return true
 	}
 	if !p.openedAt.IsZero() && now.Sub(p.openedAt) < fadeSource {
-		return true
-	}
-	// Markdown keeps fading in what came last, after the run is done.
-	if p.md != "" && now.Sub(p.doneAt) < 2*time.Second {
 		return true
 	}
 	if p.status != "" && now.Sub(p.statusAt) < statusFor+200*time.Millisecond {
@@ -751,93 +986,131 @@ func sweepSpans(source string, t float64) []ui.Span {
 	return spans
 }
 
-// blocksView draws the blocks. It returns the first text block's element
-// and the selectable box around them all, both valid for this build only.
-func (p *panel) blocksView(c *ui.Context, now time.Time) (ui.Element, ui.Element) {
-	var first ui.Element
-	found := false
-	if len(p.blocks) == 0 {
-		return first, ui.Element{}
+// blocksView draws the blocks, and returns the selectable box around them, valid
+// for this build only.
+func (p *panel) blocksView(c *ui.Context, now time.Time) ui.Element {
+	if len(p.blocks) == 0 || !p.planned {
+		return ui.Element{}
 	}
 	box := ui.Column(c).Key("blocks").Gap(gapGroup).Selectable().Cursor(p.wantCursor)
 	box.Children(func() {
 		for i, b := range p.blocks {
-			spans := p.spans(b, now, (!p.done || now.Sub(p.doneAt) < fadeNib) && i == len(p.blocks)-1)
-			el := ui.RichText(c.Key(fmt.Sprintf("%d-%d", p.run, i)), spans...).DrawObjects(func(pt *ui.Painter, _ int, r ui.Rect) {
-				pt.Fill(ui.Rect{X: r.X + 2, Y: r.Y, W: 2, H: r.H}, colorMarker.Alpha(p.nibAlpha(time.Now())), 1)
-			})
-			text := b.settled.String()
-			switch b.kind {
-			case core.BlockText:
-				size, line := sizeBody, lineBody
-				if p.word {
-					size, line = sizeWord, lineWord
-				}
-				font := fontText
-				if isCJK(text) || isCJK(string(b.pending)) {
-					font = fontTextCJK
-				}
-				el.Font(font).FontSize(size).LineHeight(line / size).SelectionColor(colorSelected)
-				if !found {
-					first, found = el, true
-				}
-			case core.BlockPhonetic:
-				el.Font(fontPhonetic).FontSize(sizeSource).LineHeight(lineSource / sizeSource)
-			default:
-				el.Font(fontSource).FontSize(sizeSource).LineHeight(lineSource / sizeSource)
-			}
+			nib := (!p.done || now.Sub(p.doneAt) < fadeNib) && i == len(p.blocks)-1
+			p.blockView(c, i, b, now, nib)
 		}
 	})
-	return first, box
+	return box
 }
 
-func (p *panel) spans(b *block, now time.Time, nib bool) []ui.Span {
-	base := colorText
-	if b.kind != core.BlockText {
-		base = colorSource
-	}
-	settled := b.settled.String()
-	if b.kind == core.BlockText && !p.copiedAt.IsZero() {
-		if q := float64(now.Sub(p.copiedAt)) / float64(fadeSweep); q < 1 {
-			return copySweep(settled, q, base)
+// blockView is a block's paragraphs, with a gap between them as a page has. Those
+// done are the same element frame after frame: only the last changes.
+func (p *panel) blockView(c *ui.Context, i int, b *block, now time.Time, nib bool) {
+	ui.Column(c).Key(fmt.Sprintf("%d-%d", p.run, i)).Gap(gapBlock).Children(func() {
+		k := 0
+		para := func(spans []ui.Span) ui.Element {
+			el := p.styled(ui.RichText(c.Key(k), spans...), b.kind)
+			k++
+			return el
 		}
+		for _, text := range b.paras {
+			para([]ui.Span{{Text: text, Color: p.ink(b.kind)}})
+		}
+		// What is left: the settled start of a paragraph, and what fades in,
+		// which may end this one and begin others.
+		var spans []ui.Span
+		if b.settled.Len() > 0 {
+			spans = append(spans, ui.Span{Text: b.settled.String(), Color: p.ink(b.kind)})
+		}
+		for _, ch := range b.young {
+			spans = appendFading(spans, ch, p.ink(b.kind), now)
+			if ch.brk {
+				para(spans)
+				spans = nil
+			}
+		}
+		if nib {
+			size := p.textSize(b.kind)
+			spans = append(spans, ui.Span{Text: "\uFFFC", ObjectWidth: 4, ObjectHeight: 0.85 * size, ObjectDescent: 0.1 * size})
+		}
+		if len(spans) > 0 {
+			para(spans).DrawObjects(func(pt *ui.Painter, _ int, r ui.Rect) {
+				pt.Fill(ui.Rect{X: r.X + 2, Y: r.Y, W: 2, H: r.H}, colorMarker.Alpha(p.nibAlpha(p.now())), 1)
+			})
+		}
+	})
+}
+
+// appendFading adds a chunk as far as it has faded in. Its opacity is in steps, so
+// chunks alike are one span, and so one run of text for the shaper: shaped apart,
+// Latin text would close up by a hair as each chunk joined the last.
+func appendFading(spans []ui.Span, ch chunk, base ui.Color, now time.Time) []ui.Span {
+	q := min(1, float32(now.Sub(ch.at))/float32(fadeReveal))
+	e := 1 - (1-q)*(1-q)*(1-q)
+	col := base.Alpha(float32(int(e*8)) / 8)
+	if n := len(spans); n > 0 && spans[n-1].Color == col {
+		spans[n-1].Text += ch.text
+		return spans
 	}
-	var spans []ui.Span
-	if settled != "" {
-		spans = append(spans, ui.Span{Text: settled, Color: base})
+	return append(spans, ui.Span{Text: ch.text, Color: col})
+}
+
+// ink is the color of a block's text: a soft one for reading, and the light of
+// a single word, whose size already asks for attention.
+func (p *panel) ink(kind core.BlockKind) ui.Color {
+	switch {
+	case kind != core.BlockText:
+		return colorSource
+	case p.word:
+		return colorHead
 	}
-	size := sizeBody
-	if p.word && b.kind == core.BlockText {
-		size = sizeWord
+	return colorBody
+}
+
+func (p *panel) textSize(kind core.BlockKind) float32 {
+	switch {
+	case kind != core.BlockText:
+		return sizeSource
+	case p.word:
+		return sizeWord
 	}
-	if b.kind != core.BlockText {
-		size = sizeSource
+	return sizeBody
+}
+
+func (p *panel) styled(el ui.Element, kind core.BlockKind) ui.Element {
+	switch kind {
+	case core.BlockText:
+		size, line := sizeBody, lineBody
+		switch {
+		case p.word:
+			size, line = sizeWord, lineWord
+		case p.reading:
+			line = lineReading
+		}
+		font := fontText
+		if p.cjk {
+			font = fontTextCJK
+		}
+		return el.Font(font).FontSize(size).LineHeight(line / size).SelectionColor(colorSelected)
+	case core.BlockPhonetic:
+		return el.Font(fontPhonetic).FontSize(sizeSource).LineHeight(lineSource / sizeSource)
 	}
-	for _, ch := range b.young {
-		q := min(1, float32(now.Sub(ch.at))/float32(fadeText))
-		e := 1 - (1-q)*(1-q)*(1-q)
-		spans = append(spans, ui.Span{Text: ch.text, Color: base.Alpha(e), BaselineShift: -riseText * (1 - e)})
-	}
-	if nib {
-		spans = append(spans, ui.Span{Text: "\uFFFC", ObjectWidth: 4, ObjectHeight: 0.85 * size, ObjectDescent: 0.1 * size})
-	}
-	return spans
+	return el.Font(fontSource).FontSize(sizeSource).LineHeight(lineSource / sizeSource)
 }
 
 // track reads the pointer each frame, and on the shell's ticks between them.
 // It reports whether a frame must show the change: the elements carry the
-// cursor too, and the corner cue follows the copy zone.
+// cursor too.
 func (p *panel) track() bool {
 	if p.local == nil {
 		return false
 	}
 	x, y := p.local()
-	was, cursor, hot := p.inCopy, p.wantCursor, p.hot
+	cursor, hot := p.wantCursor, p.hot
 	p.wantCursor = p.pointerAt(x, y)
 	if p.hot != hot {
-		p.hotSince = time.Now()
+		p.hotSince = p.now()
 	}
-	return p.inCopy != was || p.wantCursor != cursor || p.hot != hot
+	return p.wantCursor != cursor || p.hot != hot
 }
 
 // hover names a control for the pointer and says whether the pointer is on it.
@@ -913,19 +1186,12 @@ func bubble(c *ui.Context, key, text string, tone ui.Color, width float32) ui.El
 	})
 }
 
-// pointerAt splits the surface into zones by where the pointer is, with one
-// cursor for all of each: the translation down to the surface's edges is one
-// zone, so its padding and the corner cue do not flip the cursor. x and y are
-// in from the surface's top left, in the layout, which a press's scale leaves
-// alone. The boundary lags by a little so that a pointer resting on it stays.
+// pointerAt says what a press would do from where the pointer is, and nothing
+// else decides it: on a control, its work; on the text, a selection; elsewhere on
+// the surface, moving the panel. x and y are in from the surface's top left, in
+// the layout, which a press's scale leaves alone.
 func (p *panel) pointerAt(x, y float32) ui.Cursor {
-	const lag = 2
-	top := p.textTop + lag
-	if p.inCopy {
-		top = p.textTop - lag
-	}
 	inFooter := p.footer() && y >= p.footerTop
-	p.inCopy = p.textTop > 0 && y >= top && p.notice == "" && !inFooter
 	on, found := p.spotAt(x, y, inFooter)
 	p.hot = on.key
 	switch {
@@ -935,18 +1201,12 @@ func (p *panel) pointerAt(x, y float32) ui.Cursor {
 		return ui.CursorPointer
 	case inFooter:
 		return ui.CursorDefault
-	case p.md != "" && p.mdTop > 0 && y >= p.mdTop:
-		return ui.CursorText
 	case p.pinned && x >= p.surfaceW-24 && y < 24:
 		return ui.CursorPointer
-	case p.failed != "":
-		return ui.CursorGrab
-	case !p.inCopy:
-		return ui.CursorGrab
-	case !p.done || (p.pressText && p.pressMoved && p.pressGlyphs):
+	case p.textBox.W > 0 && p.textBox.Contains(x+margin, y+margin):
 		return ui.CursorText
 	}
-	return ui.CursorPointer
+	return ui.CursorGrab
 }
 
 // nibAlpha breathes once the text has stalled, and fades when it has ended.
@@ -961,29 +1221,17 @@ func (p *panel) nibAlpha(now time.Time) float32 {
 	return float32(0.55 + 0.45*math.Cos(idle*5))
 }
 
-func copySweep(text string, q float64, base ui.Color) []ui.Span {
-	const band = 8
-	runes := []rune(text)
-	head := int(q * float64(len(runes)+band))
-	from, to := max(0, head-band), min(len(runes), head)
-	if from >= to {
-		return []ui.Span{{Text: text, Color: base}}
-	}
-	return []ui.Span{
-		{Text: string(runes[:from]), Color: base},
-		{Text: string(runes[from:to]), Color: colorSuccess},
-		{Text: string(runes[to:]), Color: base},
-	}
-}
-
-func (p *panel) failure(c *ui.Context) {
+// failure says what went wrong and offers the ways out. It returns the words,
+// which can be selected to look up or report.
+func (p *panel) failure(c *ui.Context) ui.Element {
+	var words ui.Element
 	ui.Column(c).Gap(2).Children(func() {
 		title := p.failedTitle
 		if title == "" {
 			title = "翻译失败"
 		}
 		ui.Text(c, title).Font(fontSource).FontSize(sizeSource).LineHeight(lineSource / sizeSource).TextColor(colorDanger)
-		ui.Text(c, p.failed).Font(fontSource).FontSize(sizeSource).LineHeight(lineSource / sizeSource).TextColor(colorSource).Selectable()
+		words = ui.Text(c, p.failed).Font(fontSource).FontSize(sizeSource).LineHeight(lineSource / sizeSource).TextColor(colorSource).Selectable()
 	})
 	ui.Row(c).Gap(8).AlignSelf(ui.Start).Children(func() {
 		if p.failureButton(c, "retry", "重试", glyphRetry, colorDanger.Alpha(0.18), colorDanger.Alpha(0.28)) && p.retry != nil {
@@ -993,6 +1241,7 @@ func (p *panel) failure(c *ui.Context) {
 			p.fixDo()
 		}
 	})
+	return words
 }
 
 // failureButton is one way out of a failure. It says whether it was clicked.
@@ -1009,29 +1258,6 @@ func (p *panel) failureButton(c *ui.Context, key, label string, g *ui.SVG, rest,
 		ui.Text(c, label).Font(fontSource).FontSize(sizeSource).LineHeight(2).NoWrap()
 	})
 	return b.Clicked()
-}
-
-// corner is the quiet copy cue, and the check that answers a copy.
-func (p *panel) corner(c *ui.Context, now time.Time) {
-	if !p.done || p.failed != "" || p.notice != "" || p.footer() {
-		return
-	}
-	since := now.Sub(p.copiedAt)
-	copied := !p.copiedAt.IsZero() && since < 1200*time.Millisecond
-	on := copied || p.inCopy
-	icon, col := iconCopy, colorHint
-	if copied {
-		icon, col = iconCheck, colorSuccess
-		if since < drawCheck {
-			icon = checkIcon(float64(since) / float64(drawCheck))
-		}
-	}
-	pose := ui.Pose{Fade: 1, Y: 2}
-	if on {
-		pose = ui.Pose{}
-	}
-	ui.Icon(c, icon).Key("cue").Absolute().Right(9).Bottom(9).Size(15, 15).FontSize(15).TextColor(col).
-		AnimatePose(pose, ui.Animation{Duration: 140 * time.Millisecond})
 }
 
 func (p *panel) pinDot(c *ui.Context, surface ui.Element) {
@@ -1051,61 +1277,36 @@ func (p *panel) pinDot(c *ui.Context, surface ui.Element) {
 	}
 }
 
-// copyOnClick copies the whole translation on a plain click in the copy zone:
-// a press that clears a selection, or that moves, copies nothing. It returns
-// whether the zone is being pressed.
-func (p *panel) copyOnClick(c *ui.Context, surface, el, selection ui.Element, cursor func() (int, int), now time.Time) bool {
-	onText := el.Pressed() || selection.Pressed()
-	press := surface.Pressed() || onText
-	clicked := el.Clicked() || selection.Clicked() || surface.Clicked()
-	x, y := cursor()
-	if !p.wasPress && (press || clicked) {
-		p.pressText, p.hadSel, p.pressX, p.pressY = p.inCopy, p.selected, x, y
-		p.pressGlyphs = onText || selection.Hovered()
-		p.pressMoved = false
+// mdTheme is Markdown set for reading, in layers: the body a soft warm grey, the
+// words that structure it brighter, and the marker for the sections and the
+// bullets that a skimming eye lands on. Headings stay near the body's size, as a
+// panel is not a page. Everything is on the panel's ink, as tokens.go has it.
+func mdTheme(cjk bool) *markdown.Theme {
+	font := fontText
+	if cjk {
+		font = fontTextCJK
 	}
-	dx, dy := x-p.pressX, y-p.pressY
-	if dx*dx+dy*dy > dragStart*dragStart {
-		p.pressMoved = true
-	}
-	released := clicked || (p.wasPress && !press)
-	p.wasPress = press
-	zone := press && p.pressText
-	if !released || !p.pressText {
-		return zone
-	}
-	p.pressText = false
-	had := p.hadSel
-	// mygo reports a selection late, so the panel keeps its own account.
-	p.selected = p.pressGlyphs && (p.pressMoved || el.DoubleClicked() || selection.DoubleClicked() || len(selection.SelectedTexts()) > 0 && !had)
-	if had || p.selected || p.pressMoved || !p.done || p.failed != "" {
-		return zone
-	}
-	if text := p.text(); text != "" && p.copied != nil {
-		p.copied(c, text)
-		p.copiedAt = now
-		c.Invalidate()
-	}
-	return zone
-}
-
-// mdTheme is Markdown in the panel's ink: its fonts and colors, headings
-// kept close to the body's size, as a panel is not a page.
-func mdTheme() *markdown.Theme {
 	th := &markdown.Theme{
 		FontSize:            sizeBody,
-		Font:                fontText,
+		Font:                font,
 		CodeFont:            fontSource,
-		LineHeight:          lineBody / sizeBody / 1.2,
-		Text:                colorText,
-		Muted:               colorSource,
+		LineHeight:          lineReading / sizeBody,
+		CodeLineHeight:      1.55,
+		Text:                colorBody,
+		Muted:               colorAccent,
 		Link:                colorMarker,
-		Strong:              colorText,
-		Code:                colorText,
-		CodeBackground:      colorControl,
-		QuoteBar:            colorRim,
+		Strong:              colorHead,
+		StrongWeight:        650,
+		Code:                colorCodeInk,
+		CodeBackground:      washCode,
+		CodeSize:            0.88,
+		BlockSpacing:        gapBlock / sizeBody,
+		ItemSpacing:         0.42,
+		ListIndent:          1.4,
+		QuoteBar:            colorAccent.Alpha(0.55),
+		QuoteBarWidth:       2,
 		QuoteText:           colorSource,
-		Rule:                colorRim,
+		Rule:                colorRule,
 		CodeBlockBackground: washCode,
 		CodeBlockBorder:     colorRim,
 		CodeBlockRadius:     radiusControl,
@@ -1115,32 +1316,40 @@ func mdTheme() *markdown.Theme {
 		// mygo draws the check in white: the marker would swallow it.
 		Checkbox: inkPlate,
 	}
-	sizes := [6]float32{1.25, 1.12, 1.04, 1, 1, 1}
+	sizes := [6]float32{1.34, 1.2, 1.07, 1, 1, 1}
+	colors := [6]ui.Color{colorHead, colorHead, colorAccent, colorAccent, colorHead, colorHead}
 	for i := range th.Headings {
-		th.Headings[i] = markdown.HeadingStyle{Size: sizes[i], Weight: 650, Color: colorText, Top: 1.1, Bottom: 0.45}
+		th.Headings[i] = markdown.HeadingStyle{Size: sizes[i], Weight: 650, Color: colors[i], Top: 1.5, Bottom: 0.5}
 	}
 	return th
 }
 
-// markdownView streams Markdown while the run goes on, and shows it whole
-// once it is done, in the same place, so the parse carries on.
+// mdReveal fades in what the panel's pacer lets out: the pacer decides how fast,
+// and mygo's own would hold it back a second time. It shows whatever it is given
+// within a frame, and a mark on it says when, for the fade.
+var mdReveal = markdown.Reveal{Unit: markdown.ByCharacter, CatchUp: 100 * time.Microsecond, Fade: fadeReveal}
+
+// markdownView streams Markdown as far as the pacer has let it out, and shows it
+// whole once it is done, in the same place, so the parse carries on. It returns
+// the selectable view.
 func (p *panel) markdownView(c *ui.Context) ui.Element {
-	if p.mdOpts.Theme == nil {
-		p.mdOpts.Theme = mdTheme()
+	if th := p.mdOpts.Theme; th == nil || (th.Font == fontTextCJK) != p.cjk {
+		p.mdOpts.Theme = mdTheme(p.cjk)
 		p.mdOpts.WrapCode = true
 		p.mdOpts.CodeBlock = p.codeBlock
+		p.mdOpts.Reveal = &mdReveal
 	}
 	var el ui.Element
-	box := ui.Column(c).Key(fmt.Sprintf("md-%d", p.run)).Cursor(p.wantCursor)
-	box.Children(func() {
-		if p.netDone {
-			el = markdown.View(c, p.md, &p.mdOpts)
+	shown := p.md[:p.mdAt.at]
+	ui.Column(c).Key(fmt.Sprintf("md-%d", p.run)).Cursor(p.wantCursor).Children(func() {
+		if p.done {
+			el = markdown.View(c, shown, &p.mdOpts)
 		} else {
-			el = markdown.Stream(c, p.md, &p.mdOpts)
+			el = markdown.Stream(c, shown, &p.mdOpts)
 		}
+		el.SelectionColor(colorSelected)
 	})
-	_ = el
-	return box
+	return el
 }
 
 // codeBlock is a code block in the panel's words and icons: its language,
@@ -1211,27 +1420,95 @@ func (p *panel) footerRow(c *ui.Context, w float32, now time.Time) {
 			}
 		}
 		ui.Box(c).Grow(1)
-		if p.done && p.failed == "" && p.notice == "" {
-			mark, tone := iconCopy, colorSource
-			if since := now.Sub(p.copiedAt); !p.copiedAt.IsZero() && since < 1200*time.Millisecond {
-				mark, tone = iconCheck, colorSuccess
-				if since < drawCheck {
-					mark = checkIcon(float64(since) / float64(drawCheck))
-				}
-			}
-			p.action(c, "copy", "复制", mark, tone, func() {
-				if text := p.text(); text != "" && p.copied != nil {
-					p.copied(c, text)
-					p.copiedAt = now
-					c.Invalidate()
-				}
-			})
-			if p.replaceable && p.replace != nil {
-				p.action(c, "replace", "替换", glyphSwap, colorSource, p.replace)
-			}
+		p.footerActions(c, now)
+	})
+}
+
+// footerActions are what can be done with the result. They keep their place from
+// the start and fade in once it can be done, which is once the network has
+// finished: copying takes the whole result, wherever the pacer has got to.
+func (p *panel) footerActions(c *ui.Context, now time.Time) {
+	ready := p.netDone && p.failed == ""
+	if p.failed != "" {
+		return
+	}
+	box := ui.Row(c).Key("actions").Gap(4).AlignItems(ui.Center).Shrink(0)
+	box.Opacity(box.AnimateTo("in", b2f32(ready), ui.Animation{Duration: fadeSource}))
+	box.Children(func() {
+		p.copyButton(c, ready, now)
+		if p.replaceable && p.replace != nil {
+			p.action(c, "replace", "替换", glyphSwap, colorSource, ready, p.replace)
 		}
 	})
 }
+
+// copyButton copies what is selected, or else the whole result, and answers in
+// place. The word changes by what it gains or loses, 已 before it or 选中 after
+// it, each taking its room with it, where a crossfade of two words that share 复制
+// reads as a smudge. 复制 stays put unless 选中 is leaving from beside it. It turns
+// back after copiedHold.
+func (p *panel) copyButton(c *ui.Context, ready bool, now time.Time) {
+	since := now.Sub(p.copiedAt)
+	copied := !p.copiedAt.IsZero() && since < copiedHold
+	picked := p.picked != "" && !copied
+	label, mark, tone, ink := "复制", iconCopy, colorSource, colorSource
+	switch {
+	case copied:
+		label, mark, tone, ink = "已复制", iconCheck, colorSuccess, colorSuccess
+		c.After(copiedHold - since)
+	case picked:
+		label = "复制选中"
+	}
+	b := ui.ButtonBase(c.Key("copy")).Height(22).Radius(radiusControl).AlignItems(ui.Center).Justify(ui.Start).Shrink(0).Clip().Cursor(p.wantCursor).Label(label)
+	var bg ui.Color
+	if ready && p.hover("copy", b, "") {
+		bg = colorControl
+		if ink == colorSource {
+			ink = colorText
+		}
+	}
+	b.Background(b.AnimateColor("bg", bg, hoverAnim)).TextColor(b.AnimateColor("fg", ink, hoverAnim))
+	done := max(0, min(b.Spring("done", b2f32(copied), motionSettle), 1))
+	more := max(0, min(b.Spring("more", b2f32(picked), motionSettle), 1))
+	word := func(s string) float32 { return measure(c, s, fontText, sizeHint) }
+	const pad = 6 + 3 + 8 // the padding either side and the gap to the mark
+	b.Width(sizeActionMark + pad + word("复制") + done*word("已") + more*word("选中"))
+	pressable(b, scalePressed)
+	b.Children(func() {
+		ui.Row(c).MarginStart(6).Gap(3).AlignItems(ui.Center).Shrink(0).Children(func() {
+			ui.Icon(c, mark).FontSize(sizeActionMark).Shrink(0).TextColor(b.AnimateColor("tone", tone, hoverAnim)).ContentTransition(ui.ContentTransition{Animation: &copyTurn})
+			ui.Row(c).AlignItems(ui.Center).Shrink(0).Children(func() {
+				wordPart(c, "已", done)
+				actionWord(c, "复制")
+				wordPart(c, "选中", more)
+			})
+		})
+	})
+	if b.Clicked() && ready {
+		if text := p.text(); text != "" && p.copied != nil {
+			p.copied(c, text)
+			p.copiedAt = now
+			c.Invalidate()
+		}
+	}
+}
+
+func actionWord(c *ui.Context, s string) {
+	ui.Text(c, s).Font(fontText).FontSize(sizeHint).LineHeight(lineHint / sizeHint).NoWrap().Shrink(0)
+}
+
+// wordPart is a word that comes and goes inside a label: k of its width, and as
+// visible.
+func wordPart(c *ui.Context, s string, k float32) {
+	if k <= 0.01 {
+		return
+	}
+	ui.Box(c).Key(s).Width(k * measure(c, s, fontText, sizeHint)).Clip().Shrink(0).Opacity(k).Children(func() {
+		actionWord(c, s)
+	})
+}
+
+var copyTurn = ui.Animation{Spring: ui.SpringOptions{Duration: 240 * time.Millisecond}}
 
 // featureChip is one feature in the footer. The one showing wears its name and
 // its icon awake; the others are an icon, which wakes under the pointer and is
@@ -1270,11 +1547,11 @@ func (p *panel) featureChip(c *ui.Context, f feature) {
 }
 
 // action is one thing to do with the result: a mark in the colour of its word.
-func (p *panel) action(c *ui.Context, key, label string, mark *ui.SVG, tone ui.Color, do func()) {
+func (p *panel) action(c *ui.Context, key, label string, mark *ui.SVG, tone ui.Color, ready bool, do func()) {
 	b := ui.ButtonBase(c.Key(key)).Height(22).Padding(0, 8, 0, 6).Gap(3).Radius(radiusControl).AlignItems(ui.Center).Justify(ui.Center).Shrink(0).Cursor(p.wantCursor).Label(label)
 	var bg ui.Color
 	text := colorSource
-	if p.hover(key, b, "") {
+	if ready && p.hover(key, b, "") {
 		bg, text = colorControl, colorText
 	}
 	b.Background(b.AnimateColor("bg", bg, hoverAnim)).TextColor(b.AnimateColor("fg", text, hoverAnim))
@@ -1283,7 +1560,7 @@ func (p *panel) action(c *ui.Context, key, label string, mark *ui.SVG, tone ui.C
 		ui.Icon(c, mark).FontSize(sizeActionMark).Shrink(0).TextColor(tone)
 		ui.Text(c, label).Font(fontText).FontSize(sizeHint).LineHeight(lineHint / sizeHint).NoWrap()
 	})
-	if b.Clicked() {
+	if b.Clicked() && ready {
 		do()
 	}
 }
@@ -1291,7 +1568,7 @@ func (p *panel) action(c *ui.Context, key, label string, mark *ui.SVG, tone ui.C
 // toEnd brings a long result back to its end, once the user scrolled up
 // while it streamed.
 func (p *panel) toEnd(c *ui.Context, w, bottom float32) {
-	if !p.reading || p.following || p.scroll.MaxY <= 0 || p.done {
+	if p.following || p.scroll.MaxY <= 0 || p.done {
 		return
 	}
 	b := ui.ButtonBase(c.Key("to-end")).Absolute().Left(w/2-44).Top(bottom-34).Width(88).Height(24).Radius(12).Gap(3).
@@ -1308,7 +1585,30 @@ func (p *panel) toEnd(c *ui.Context, w, bottom float32) {
 	})
 	if b.Clicked() {
 		p.following = true
-		p.scroll.Y = math.MaxFloat32
+		p.followed = p.scroll.MaxY
+		p.scroll.ScrollTo(0, math.MaxFloat32, ui.Animation{Spring: motionFollow})
 		c.Invalidate()
 	}
+}
+
+// scrollEdges shows there is more above or below: the text dissolves into the
+// panel instead of ending at a hard line, which also lets new lines rise out of
+// nothing, and a thin mark says how far along the page is. They only tell: a
+// wheel scrolls, and every press goes through to what is under them.
+func (p *panel) scrollEdges(c *ui.Context, w, viewH float32) {
+	most := p.scroll.MaxY
+	if most <= 0.5 || viewH <= 0 || p.capsule {
+		return
+	}
+	at := max(0, min(p.scroll.Y, most))
+	edge := func(key string, top, alpha float32, from, to ui.Color) {
+		if alpha > 0.01 {
+			ui.Box(c).Key(key).Absolute().Left(0).Top(top).Width(w).Height(heightEdge).PassThrough().Opacity(alpha).
+				LinearGradient(ui.LinearGradient{From: from, To: to, Angle: 180})
+		}
+	}
+	edge("edge-top", 0, min(1, at/heightEdge), colorSurface, colorSurface.Alpha(0))
+	edge("edge-end", viewH-heightEdge, min(1, (most-at)/heightEdge), colorSurface.Alpha(0), colorSurface)
+	long := max(24, viewH*viewH/(viewH+most))
+	ui.Box(c).Key("mark").Absolute().Left(w - 6).Top(4 + at/most*(viewH-long-8)).Width(3).Height(long).Radius(1.5).Background(colorScrollbar).PassThrough()
 }

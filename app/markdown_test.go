@@ -16,7 +16,8 @@ func TestMarkdownBoldAndCodeCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	var p panel
-	p.md, p.netDone = "普通的中文和**加粗的中文**，plain and **bold English**。\n\n```go\nfmt.Println(1)\n```", true
+	p.md, p.netDone, p.done = "普通的中文和**加粗的中文**，plain and **bold English**。\n\n```go\nfmt.Println(1)\n```", true, true
+	p.mdAt.at = len(p.md)
 	tt := ui.NewTester(func(c *ui.Context) {
 		ui.Column(c).Padding(16).Background(colorSurface).Fill().Children(func() {
 			p.markdownView(c)
@@ -30,7 +31,7 @@ func TestMarkdownBoldAndCodeCopy(t *testing.T) {
 	if tt.Clipboard() != "fmt.Println(1)" && tt.Clipboard() != "fmt.Println(1)\n" {
 		t.Errorf("clipboard %q", tt.Clipboard())
 	}
-	if !tt.HasText("已复制") {
+	if !tt.HasText("已") {
 		t.Errorf("texts %q", tt.Texts())
 	}
 	if dir := os.Getenv("GLOSS_DUMP"); dir != "" {

@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"errors"
 	"log"
+	"math"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -151,10 +152,6 @@ func Run() error {
 		p := mygo.Screen.CursorScreenPoint()
 		x, y := s.win.Position()
 		return float32(p.X - x - margin), float32(p.Y - y - margin)
-	}
-	s.panel.cursor = func() (int, int) {
-		p := mygo.Screen.CursorScreenPoint()
-		return p.X, p.Y
 	}
 	s.panel.copied = func(c *ui.Context, text string) {
 		c.WriteClipboard(text)
@@ -706,15 +703,13 @@ func (s *shell) chat(ctx context.Context, actionID string, msgs []prompt.Message
 func (s *shell) present(content func()) {
 	wasOpen := s.open()
 	content()
-	p := mygo.Screen.CursorScreenPoint()
-	s.area = mygo.Screen.DisplayNearestPoint(p).WorkArea
-	s.panel.maxHeight = float32(s.area.Height) * 0.6
-	s.panel.maxReading = float32(s.area.Height) * 0.75
-	wantW, wantH := widthCapsule, heightCapsule
 	if wasOpen && s.panel.pinned {
 		s.win.Invalidate()
 		return
 	}
+	p := mygo.Screen.CursorScreenPoint()
+	s.onScreen(p)
+	wantW, wantH := widthCapsule, heightCapsule
 	x, y := s.clamp(p.X-int(paddingX)-margin, p.Y+20-margin, wantW, wantH)
 	if wasOpen {
 		s.glideTo(x, y)
@@ -730,6 +725,14 @@ func (s *shell) present(content func()) {
 	s.setSize(wantW, wantH)
 	s.win.SetPosition(x, y)
 	s.show()
+}
+
+// onScreen takes the limits of the screen at p.
+func (s *shell) onScreen(p mygo.Point) {
+	s.area = mygo.Screen.DisplayNearestPoint(p).WorkArea
+	s.panel.maxHeight = float32(s.area.Height) * 0.6
+	s.panel.maxReading = float32(s.area.Height) * 0.75
+	s.panel.screenW = float32(s.area.Width) - 2*12
 }
 
 // clamp keeps a surface of the size on the work area.
@@ -845,6 +848,7 @@ func (s *shell) followCursor() {
 				stop <- false
 				s.updateClickThrough()
 				s.watchOutside(down)
+				s.panel.held = down && s.mouseIn
 			})
 			if <-stop {
 				return
@@ -870,8 +874,8 @@ func (s *shell) updateClickThrough() {
 			s.win.Invalidate()
 		}
 		setCursor(s.panel.wantCursor)
-	} else if s.panel.inCopy || s.panel.hot != "" {
-		s.panel.inCopy, s.panel.hot = false, ""
+	} else if s.panel.hot != "" {
+		s.panel.hot = ""
 		s.win.Invalidate()
 	}
 }
@@ -914,7 +918,7 @@ type outsidePress struct {
 
 // frame follows the surface with the window: it is large enough at once,
 // moves where the surface should be, and is dragged by the surface.
-func (s *shell) frame(c *ui.Context, curW, curH, wantW, wantH float32, pressed, overText bool) {
+func (s *shell) frame(c *ui.Context, curW, curH, wantW, wantH float32, pressed bool) {
 	s.curW, s.curH = curW, curH
 	if s.frameLog {
 		// Only gaps after a frame that asked for the next one count.
@@ -926,17 +930,10 @@ func (s *shell) frame(c *ui.Context, curW, curH, wantW, wantH float32, pressed, 
 		s.lastPaint = now
 		s.wasAnimating = pressed || s.drag.active || s.x.moving() || s.y.moving()
 	}
-	// A window that resizes every frame drops frames: it grows at once, to
-	// where the surface is heading, and shrinks once the surface is there.
-	if w, h := int(wantW+0.999)+2*margin, int(wantH+0.999)+2*margin; w > s.winW || h > s.winH || (abs32(curW-wantW) < 0.5 && abs32(curH-wantH) < 0.5) {
-		s.setSize(max(curW, wantW), max(curH, wantH))
-	}
-	s.dragFrame(c, pressed, overText)
-	if !s.panel.pinned && !s.drag.active {
-		x, y := s.clamp(int(s.x.target), int(s.y.target), wantW, wantH)
-		if x != int(s.x.target) || y != int(s.y.target) {
-			s.glideTo(x, y)
-		}
+	s.fitWindow(curW, curH, wantW, wantH)
+	s.dragFrame(c, pressed)
+	if !s.drag.active {
+		s.keepOnScreen(wantW, wantH)
 	}
 	if s.x.moving() || s.y.moving() {
 		now := time.Now()
@@ -950,6 +947,58 @@ func (s *shell) frame(c *ui.Context, curW, curH, wantW, wantH float32, pressed, 
 	}
 }
 
+// keepOnScreen moves the panel only for what it has to show. The plan says how much
+// room the run needs: the window moves for that, once, as the panel opens, and
+// never for a line of text. A panel moved by hand stays where it was put, unless
+// that leaves it off the screen or too short to read.
+func (s *shell) keepOnScreen(wantW, wantH float32) {
+	h := s.reserve(wantH)
+	if s.panel.pinned {
+		h = min(wantH, pinnedLeast)
+	}
+	x, y := s.clamp(int(s.x.target), int(s.y.target), wantW, h)
+	if x != int(s.x.target) || y != int(s.y.target) {
+		s.glideTo(x, y)
+	}
+	s.panel.below = float32(s.area.Y + s.area.Height - y - margin - 12)
+}
+
+// reserve is the height to leave for the surface: what the plan said, and if the
+// text outgrows that, the next step up, so that a window near the screen's edge
+// moves now and then and not with every line.
+func (s *shell) reserve(wantH float32) float32 {
+	if s.panel.capsule || s.panel.closing || !s.panel.planned {
+		return wantH
+	}
+	return stepRoom(s.panel.plan.room+s.panel.footerHeight(), wantH)
+}
+
+func stepRoom(room, want float32) float32 {
+	if want <= room {
+		return room
+	}
+	return room + float32(math.Ceil(float64((want-room)/stepWindow)))*stepWindow
+}
+
+// fitWindow keeps the window large enough for the surface. Resizing a window
+// redraws it on the spot and can drop a frame, and while text streams the surface
+// would ask for that with every line: the window takes what reserve says at once.
+// It takes the exact size only when the run is over and the surface at rest.
+func (s *shell) fitWindow(curW, curH, wantW, wantH float32) {
+	if s.panel.closing {
+		return
+	}
+	if s.panel.done && abs32(curW-wantW) < 0.5 && abs32(curH-wantH) < 0.5 {
+		s.setSize(wantW, wantH)
+		return
+	}
+	w, h := max(curW, wantW), max(curH, s.reserve(wantH))
+	if int(w+0.999)+2*margin <= s.winW && int(h+0.999)+2*margin <= s.winH {
+		return
+	}
+	s.setSize(w, min(h, float32(s.area.Height)))
+}
+
 // dragState is a press on the surface that may become a move.
 type dragState struct {
 	active, pressing bool
@@ -960,7 +1009,7 @@ type dragState struct {
 	last             time.Time
 }
 
-func (s *shell) dragFrame(c *ui.Context, pressed, overText bool) {
+func (s *shell) dragFrame(c *ui.Context, pressed bool) {
 	d := &s.drag
 	if !pressed {
 		if d.active {
@@ -972,16 +1021,8 @@ func (s *shell) dragFrame(c *ui.Context, pressed, overText bool) {
 	c.Invalidate()
 	p := mygo.Screen.CursorScreenPoint()
 	if !d.pressing {
-		d.pressing = true
-		if overText {
-			d.startX = -1 << 30 // the press belongs to the text
-			return
-		}
 		x, y := s.win.Position()
 		*d = dragState{pressing: true, startX: p.X, startY: p.Y, originX: x, originY: y, lastX: p.X, lastY: p.Y, last: time.Now()}
-		return
-	}
-	if d.startX == -1<<30 {
 		return
 	}
 	dx, dy := p.X-d.startX, p.Y-d.startY
@@ -1005,6 +1046,7 @@ func (s *shell) endDrag() {
 	d := &s.drag
 	s.panel.dragging = false
 	x, y := s.win.Position()
+	s.onScreen(mygo.Point{X: x + margin + int(s.curW)/2, Y: y + margin + int(s.curH)/2})
 	vx, vy := d.velX, d.velY
 	if time.Since(d.last) > 80*time.Millisecond {
 		vx, vy = 0, 0

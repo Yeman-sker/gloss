@@ -25,42 +25,50 @@ func TestIsWord(t *testing.T) {
 }
 
 func TestTokenLenKeepsWordsWhole(t *testing.T) {
-	if n := tokenLen([]rune("don't stop")); n != 5 {
+	if n := tokenLen([]rune("don't stop"), false); n != 6 {
 		t.Errorf("Latin token = %d", n)
 	}
-	if n := tokenLen([]rune("注释")); n != 1 {
+	if n := tokenLen([]rune("注释"), false); n != 1 {
 		t.Errorf("CJK token = %d", n)
 	}
 }
 
-func TestPointerZones(t *testing.T) {
-	p := panel{done: true, surfaceW: 420, textTop: 66}
-	for _, tt := range []struct {
-		x, y float32
-		want ui.Cursor
-	}{
-		{200, 30, ui.CursorGrab},     // the source
-		{200, 100, ui.CursorPointer}, // the translation
-		{415, 140, ui.CursorPointer}, // its padding and the corner cue
-		{2, 140, ui.CursorPointer},   // the left edge
-	} {
-		if got := p.pointerAt(tt.x, tt.y); got != tt.want {
-			t.Errorf("at %v,%v: %v", tt.x, tt.y, got)
-		}
+// A line end at the end of what came may be the first of two, which would end the
+// paragraph: it waits, so that the page does not take a line and give it back.
+func TestTokenLenHoldsLineEndsUntilTheNextText(t *testing.T) {
+	if n := tokenLen([]rune("段\n"), false); n != 1 {
+		t.Errorf("before the next text = %d", n)
+	}
+	if n := tokenLen([]rune("\n"), false); n != 0 {
+		t.Errorf("a line end alone = %d", n)
+	}
+	if n := tokenLen([]rune("\n"), true); n != 1 {
+		t.Errorf("at the end of the run = %d", n)
+	}
+	if n := tokenLen([]rune("段\n\n后"), false); n != 3 {
+		t.Errorf("with the next text = %d", n)
 	}
 }
 
-func TestPointerBoundaryLags(t *testing.T) {
-	p := panel{done: true, surfaceW: 420, textTop: 66}
-	if p.pointerAt(200, 67); p.inCopy {
-		t.Error("entered before passing the boundary")
-	}
-	p.pointerAt(200, 70)
-	if p.pointerAt(200, 65); !p.inCopy {
-		t.Error("left before passing the boundary")
-	}
-	if p.pointerAt(200, 62); p.inCopy {
-		t.Error("did not leave")
+// A press does what the cursor says, wherever it is: nothing is decided from how
+// the press goes on.
+func TestPointerSaysWhatAPressDoes(t *testing.T) {
+	p := panel{done: true, surfaceW: 420, footerTop: 200, features: []feature{{"a", "A"}, {"b", "B"}},
+		textBox: ui.Rect{X: margin + 16, Y: margin + 60, W: 388, H: 120}}
+	for _, tt := range []struct {
+		name string
+		x, y float32
+		want ui.Cursor
+	}{
+		{"the source", 200, 30, ui.CursorGrab},
+		{"the text", 200, 100, ui.CursorText},
+		{"the padding beside it", 4, 100, ui.CursorGrab},
+		{"under the text", 200, 190, ui.CursorGrab},
+		{"the footer", 200, 210, ui.CursorDefault},
+	} {
+		if got := p.pointerAt(tt.x, tt.y); got != tt.want {
+			t.Errorf("%s: %v", tt.name, got)
+		}
 	}
 }
 
@@ -73,33 +81,55 @@ func TestClampWidth(t *testing.T) {
 	}
 }
 
-func TestCheckIconDrawsAlongItsStroke(t *testing.T) {
-	for _, q := range []float64{0, 0.2, 0.5, 1} {
-		if checkIcon(q) == nil {
-			t.Errorf("q=%v", q)
-		}
-	}
-}
-
-func TestPanelOpensOnFirstDeltaAndFinishesPaced(t *testing.T) {
+func TestPanelOpensOncePlannedAndFinishesPaced(t *testing.T) {
 	var p panel
 	p.reset("hello")
-	p.lastFrame = time.Now().Add(-time.Second)
+	now := time.Now()
+	p.clock = func() time.Time { return now }
+	p.lastFrame = now
 	if !p.capsule {
 		t.Fatal("starts as a capsule")
 	}
 	p.apply(core.Event{Run: 1, Type: core.EventDelta, Kind: core.BlockText, Delta: "你好"})
-	p.apply(core.Event{Run: 1, Type: core.EventDone})
-	if p.capsule {
-		t.Fatal("first delta opens it")
+	p.settle(stubMeasure, now)
+	if !p.capsule {
+		t.Fatal("the first text alone does not tell enough")
 	}
-	p.release(time.Now())
+	p.apply(core.Event{Run: 1, Type: core.EventDone})
+	p.settle(stubMeasure, now)
+	if p.capsule || !p.planned {
+		t.Fatal("the end of the run tells all")
+	}
+	now = now.Add(50 * time.Millisecond)
+	p.release(now)
 	if p.done {
 		t.Fatal("not done while text fades in")
 	}
-	p.release(time.Now().Add(time.Second))
+	for range 40 {
+		now = now.Add(50 * time.Millisecond)
+		p.release(now)
+	}
 	if !p.done || p.text() != "你好" {
 		t.Fatalf("done=%v text=%q", p.done, p.text())
+	}
+}
+
+func stubMeasure(text, _ string, size float32) float32 { return em(text) * size }
+
+// A result too slow to finish in the wait opens on what the plan can guess.
+func TestPanelOpensOnItsGuessAfterTheWait(t *testing.T) {
+	var p panel
+	p.reset("hello there")
+	now := time.Now()
+	p.clock = func() time.Time { return now }
+	p.apply(core.Event{Run: 1, Type: core.EventDelta, Kind: core.BlockText, Delta: "你"})
+	p.settle(stubMeasure, now.Add(planWait/2))
+	if p.planned {
+		t.Fatal("planned before the wait was up")
+	}
+	p.settle(stubMeasure, now.Add(planWait))
+	if !p.planned || p.capsule {
+		t.Fatal("still waiting after the wait")
 	}
 }
 
@@ -176,17 +206,28 @@ func TestSessionRecordsCorrectionsAndNoText(t *testing.T) {
 	}
 }
 
-func TestPanelMarkdownIsDoneWithTheRun(t *testing.T) {
+// Markdown leaves the pacer like any text: the panel is done with it when the
+// last of it has shown, not when the network ends.
+func TestPanelMarkdownIsDoneWhenAllHasShown(t *testing.T) {
 	var p panel
 	p.reset("long text")
+	now := time.Now()
+	p.clock = func() time.Time { return now }
+	p.lastFrame = now
 	p.beginRun(1, feature{"agent", "整理输出"}, "rule", "", core.BlockMarkdown, false)
-	p.apply(core.Event{Run: 1, Type: core.EventDelta, Kind: core.BlockMarkdown, Delta: "# 标题\n\n- 一\n"})
-	if p.done || !p.reading {
-		t.Fatal("streams in the reading layout")
-	}
+	const src = "# 标题\n\n- 一\n"
+	p.apply(core.Event{Run: 1, Type: core.EventDelta, Kind: core.BlockMarkdown, Delta: src})
 	p.apply(core.Event{Run: 1, Type: core.EventDone})
-	if !p.done || p.text() != "# 标题\n\n- 一\n" {
-		t.Fatalf("done=%v text=%q", p.done, p.text())
+	p.settle(stubMeasure, now)
+	if p.done {
+		t.Fatal("done before any of it showed")
+	}
+	for range 200 {
+		now = now.Add(16 * time.Millisecond)
+		p.release(now)
+	}
+	if !p.done || p.mdAt.at != len(src) || p.text() != src {
+		t.Fatalf("done=%v at=%d text=%q", p.done, p.mdAt.at, p.text())
 	}
 }
 
@@ -196,19 +237,13 @@ func TestPanelSwitchClearsTheResult(t *testing.T) {
 	p.features = []feature{{"translate", "翻译"}, {"explain", "释义"}}
 	p.beginRun(1, feature{"translate", "翻译"}, "rule", "", core.BlockText, false)
 	p.apply(core.Event{Run: 1, Type: core.EventDelta, Kind: core.BlockText, Delta: "你好"})
+	p.settle(stubMeasure, time.Now().Add(planWait))
 	p.beginRun(2, feature{"explain", "释义"}, "manual", "", core.BlockText, false)
 	if len(p.blocks) != 0 || p.capsule || !p.waiting() || p.failedTitle != "释义失败" {
 		t.Fatalf("blocks=%d capsule=%v waiting=%v", len(p.blocks), p.capsule, p.waiting())
 	}
 	if !p.footer() {
 		t.Fatal("two features show the footer")
-	}
-}
-
-func TestPointerOnFooterIsNotCopy(t *testing.T) {
-	p := panel{done: true, surfaceW: 420, textTop: 66, footerTop: 150, features: []feature{{"a", "A"}, {"b", "B"}}}
-	if c := p.pointerAt(200, 160); c != ui.CursorDefault || p.inCopy {
-		t.Fatalf("footer cursor %v, inCopy %v", c, p.inCopy)
 	}
 }
 
@@ -238,7 +273,7 @@ func TestPanelFailureOffersTheFix(t *testing.T) {
 	if p.failed != "还没有设置模型服务" {
 		t.Fatalf("failed = %q", p.failed)
 	}
-	tt := ui.NewTester(p.failure, 420, 120)
+	tt := ui.NewTester(func(c *ui.Context) { p.failure(c) }, 420, 120)
 	if err := tt.Click("设置模型服务"); err != nil {
 		t.Fatalf("%v: %q", err, tt.Texts())
 	}
@@ -254,7 +289,7 @@ func TestPanelFailureOffersTheFix(t *testing.T) {
 // footerPanel has everything the footer can show, with the longest name on.
 func footerPanel() *panel {
 	return &panel{
-		done: true, current: "prompt", by: "rule", why: "规则判断", replaceable: true,
+		done: true, netDone: true, current: "prompt", by: "rule", why: "规则判断", replaceable: true,
 		footerTop: -1000, output: core.BlockText, wantCursor: ui.CursorDefault,
 		features: []feature{{"translate", "翻译"}, {"explain", "释义"}, {"prompt", "优化提示词"}, {"agent", "整理输出"}},
 		replace:  func() {},
@@ -468,7 +503,7 @@ func TestColorsComeFromTokens(t *testing.T) {
 
 // The marker would swallow the white check mygo draws.
 func TestCheckedBoxKeepsItsCheck(t *testing.T) {
-	if mdTheme().Checkbox == colorMarker {
+	if mdTheme(false).Checkbox == colorMarker {
 		t.Error("a checked box in the marker's colour hides its check")
 	}
 }

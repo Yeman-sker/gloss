@@ -17,13 +17,18 @@ const (
 	fontCap       = "Gloss Sans, Gloss Mono, Gloss CJK"
 
 	sizeBody, lineBody     float32 = 15, 24
+	lineReading            float32 = 26 // long text and Markdown read better with more air
 	sizeWord, lineWord     float32 = 20, 28
 	sizeSource, lineSource float32 = 12, 20
+	gapBlock               float32 = 13 // between the paragraphs of a result
+	heightEdge             float32 = 22 // where scrolled text dissolves into the panel
 
 	widthMinPanel float32 = 240
 	widthPanel    float32 = 420
 	// widthReading is the reading layout's, for long and structured results.
-	widthReading   float32 = 520
+	widthReading float32 = 520
+	// widthWide is for what wrapping ruins: code and tables.
+	widthWide      float32 = 640
 	widthMinFooter float32 = 344
 	heightFooter   float32 = 36
 	heightChip     float32 = 28 // a feature in the footer: its icon, 22, and the margin it carries
@@ -49,18 +54,47 @@ const (
 	// charsSource bounds the reading sweep: every lit rune costs a span.
 	charsSource = 48
 
-	dragStart          = 4
-	fadeText           = 160 * time.Millisecond
-	exitTime           = 100 * time.Millisecond
-	fadeSweep          = 380 * time.Millisecond
-	noticeFor          = 1300 * time.Millisecond
-	fadeNib            = 220 * time.Millisecond
-	fadeSource         = 240 * time.Millisecond
-	drawCheck          = 180 * time.Millisecond
-	statusFor          = 3 * time.Second
-	riseText   float32 = 3
-	rateMin            = 30.0
-	rateMax            = 120.0
+	dragStart  = 4
+	fadeText   = 160 * time.Millisecond // a page coming in, in the settings window
+	fadeReveal = 200 * time.Millisecond // text the pacer lets out
+	noticeFor  = 1300 * time.Millisecond
+	fadeNib    = 220 * time.Millisecond
+	fadeSource = 240 * time.Millisecond
+	statusFor  = 3 * time.Second
+
+	riseText float32 = 3 // how far a line that arrives rises, in the settings window
+
+	// The surface leaves in exitTime, folding back toward the capsule it opened
+	// from; its content goes first, so nothing reads as cut off. Long enough to
+	// see, and well under the time it took to open: closing is the user's call.
+	exitTime   = 240 * time.Millisecond
+	exitFade   = 100 * time.Millisecond
+	copiedHold = 1400 * time.Millisecond
+
+	// The pacer, in runes a second: a line of 32 runes every half a second at
+	// the slow end, and a clear backlog after paceCatchUp seconds of it.
+	paceMin     = 36.0
+	paceMax     = 260.0
+	paceCatchUp = 0.9
+	paceFinish  = 1.8
+	paceEase    = 0.35
+	paceOwe     = 0.3 // seconds of speed a piece that went whole can be charged
+
+	// What the panel waits for before it decides its frame: the first text, and
+	// then this long or this many runes, whichever comes first.
+	planWait   = 180 * time.Millisecond
+	planEnough = 64
+	// A result under this many lines of the narrow width keeps the narrow width.
+	planCompactLines = 6
+	// Height is reserved a little short of the guess: see planLayout.
+	planLean float32 = 0.85
+	// A Markdown result of unknown length is rarely under this, in ems.
+	emMarkdownFloor float32 = 180
+	// How far below its top a reading panel wants room.
+	planRoomReading float32 = 560
+	// The window grows in steps while text streams: each resize can drop a frame.
+	stepWindow  float32 = 120
+	pinnedLeast         = float32(200) // a panel moved to the screen's edge still reads
 )
 
 var (
@@ -69,6 +103,10 @@ var (
 	colorShadow  = ui.RGBA(0, 0, 0, 0.42)
 	colorContact = ui.RGBA(0, 0, 0, 0.24) // the shadow close under the panel
 	colorText    = ui.Hex("#E6E6E8")
+	colorBody    = ui.Hex("#CFCDC6") // long text: warm, and a step below the white that tires the eye
+	colorHead    = ui.Hex("#F4F1E8") // what structures it: headings and strong words, in the sticker's cream
+	colorAccent  = ui.Hex("#E9C46A") // the marker, quieted enough to set a section's rhythm in long text
+	colorCodeInk = ui.Hex("#E8C8A0") // code within text
 	colorSource  = ui.Hex("#ACACAD")
 	colorHint    = ui.Hex("#828284")
 	colorSuccess = ui.Hex("#5EDBA5")
@@ -114,6 +152,8 @@ var (
 
 	colorSelected = colorMarker.Alpha(0.28) // selected text, in both windows
 
+	motionFollow  = ui.SpringOptions{Duration: 320 * time.Millisecond}
+	motionExit    = ui.SpringOptions{Duration: exitTime}
 	motionPop     = ui.SpringOptions{Duration: 150 * time.Millisecond}
 	motionGrow    = ui.SpringOptions{Duration: 280 * time.Millisecond, Bounce: 0.08}
 	motionStream  = ui.SpringOptions{Duration: 200 * time.Millisecond}
@@ -158,8 +198,6 @@ const (
 const (
 	glideDuration = 0.28 // seconds, the window's move to a new place
 	scaleFrom     = 0.97
-	scaleExit     = 0.98
 	scalePressed  = 0.975
-	scaleLifted   = 1.02
 	scaleGiveWay  = 0.985
 )

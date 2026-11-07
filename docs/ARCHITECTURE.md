@@ -54,7 +54,7 @@ capture/ settings/ routing/ providers/ (plugins，未来)
 - **`settings/`**：读写配置文件，按功能声明校验设置，Key 只在这里。`Update` 是唯一的写入口：改动后的整份文件先通过和读取相同的校验，再原子写入（0600），服务改名和删除会同步改掉所有引用。错误分类（`ErrNoService`、`MissingError`、`ErrInvalid`）让界面能把错误指向设置里对应的页面。见[决策 0008](decisions/0008-two-layer-settings.md)。
 - **`memory/`**：本地使用记录、偏好提炼和统计。**`routing/`**：规则、Jev、偏好、最近选择、默认的选择顺序。见[决策 0009](decisions/0009-memory-and-routing.md)。
 - **`capture/`**：提供“当前选中了什么”、来源信号，以及在目标没变时写回。平台差异都封装在 `capture/helper/src/<平台>.rs`。
-- **`app/`**：把 Blocks 变成界面，还有设置窗口（`prefs.go` 是逻辑和页面，包括首次运行引导，界面按功能声明生成；`prefs_ui.go` 是组件层；`icons.go` 和 `glyphs.go` 是动态图标和单色字形；外观都从 `tokens.go` 取）、错误到修复入口的映射（`fix.go`）和诊断日志（`logfile.go`）。品牌风格以后只改这一层。
+- **`app/`**：把 Blocks 变成界面，还有设置窗口（`prefs.go` 是逻辑和页面，包括首次运行引导，界面按功能声明生成；`prefs_ui.go` 是组件层；`icons.go` 和 `glyphs.go` 是动态图标和单色字形；外观都从 `tokens.go` 取）、错误到修复入口的映射（`fix.go`）、面板打开前定框架（`plan.go`）和放出文字的节奏（`pace.go`），以及诊断日志（`logfile.go`）。品牌风格以后只改这一层。
 - **`plugins/`**：官方插件，尚未开始。
 
 ## 跨进程协议
