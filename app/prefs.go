@@ -22,7 +22,7 @@ import (
 
 // Version is the version of this build. mygo.json says the same, which a
 // test checks.
-const Version = "0.1.3"
+const Version = "0.1.4"
 
 var isMac = runtime.GOOS == "darwin"
 

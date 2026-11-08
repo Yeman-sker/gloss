@@ -1,7 +1,7 @@
 {
   "name": "Gloss",
   "identifier": "dev.gloss.app",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "out": "build",
   "copyright": "© 2026 Gloss",
   "macos": {
