@@ -21,7 +21,14 @@ type Jev struct {
 	Model   string // jev-latest by default
 	// SendTitle lets the window title go to Jev.
 	SendTitle bool
-	Client    *http.Client
+	// Rich sends the fuller state and criteria of jevstate.go, text
+	// around the selection included. Off in the app: routebench compares
+	// the two first.
+	Rich bool
+	// NoHints leaves the rules' scores out of the rich state, to see
+	// whether Jev follows them.
+	NoHints bool
+	Client  *http.Client
 }
 
 // maxSent bounds how much of a selection goes to Jev: its start and end
@@ -52,6 +59,9 @@ type jevResponse struct {
 // State is what Jev reads: the selection, cut to its start and end, and
 // the signals around it. It has no key and, unless allowed, no title.
 func (j Jev) State(in Input) string {
+	if j.Rich {
+		return j.richState(in)
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Selected text:\n%s\n\n", clip(in.Text, maxSent))
 	fmt.Fprintf(&b, "Selected in app: %s\n", or(in.App, "unknown"))
@@ -94,10 +104,7 @@ func (j Jev) Judge(ctx context.Context, in Input) (Verdict, error) {
 	if j.APIKey == "" {
 		return Verdict{}, errors.New("Jev 缺少 API Key")
 	}
-	criteria := map[string]string{}
-	for _, c := range in.Candidates {
-		criteria[c.ID] = c.Name + "：" + c.Purpose
-	}
+	criteria := j.criteria(in)
 	model := j.Model
 	if model == "" {
 		model = "jev-latest"

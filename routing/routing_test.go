@@ -25,7 +25,7 @@ var builtin = []core.Descriptor{
 
 // Sample is one case of testdata/samples.json.
 type Sample struct {
-	ID, Text, App, Editable, Expect, Note string
+	ID, Text, Before, After, App, Editable, Expect, Note string
 }
 
 func LoadSamples(t testing.TB) []Sample {
@@ -42,17 +42,27 @@ func LoadSamples(t testing.TB) []Sample {
 
 func input(s Sample) Input {
 	return Input{Text: s.Text, Shape: memory.ShapeOf(s.Text), App: s.App, Editable: core.ParseEditable(s.Editable),
-		TargetLang: "zh-Hans", Candidates: builtin, Default: "translate"}
+		Before: s.Before, After: s.After, TargetLang: "zh-Hans", Candidates: builtin, Default: "translate"}
 }
 
 // TestSamples runs the rules on the fixed samples. Run with -v for the
 // table; docs/research/2026-11-05-jev.md records the numbers.
 func TestSamples(t *testing.T) {
-	var decided, right, wrong, ambiguousDecided, clear int
+	var decided, right, wrong, ambiguousDecided, clear, ctxSamples, ctxRight int
 	var slowest time.Duration
 	for _, s := range LoadSamples(t) {
 		d := Router{}.Route(context.Background(), input(s))
 		slowest = max(slowest, d.Elapsed)
+		// The rules do not read the text around a selection: samples
+		// that need it are for Jev, and only reported here.
+		if s.Before+s.After != "" {
+			ctxSamples++
+			if d.By == memory.ByRule && d.ID == s.Expect {
+				ctxRight++
+			}
+			t.Logf("%-4s 期望 %-9s → %-9s %-8s（带前后文，规则看不到）", s.ID, s.Expect, d.ID, d.By)
+			continue
+		}
 		mark := ""
 		if s.Expect != "ambiguous" {
 			clear++
@@ -72,8 +82,8 @@ func TestSamples(t *testing.T) {
 		}
 		t.Logf("%-4s 期望 %-9s → %-9s %-8s %s %s", s.ID, s.Expect, d.ID, d.By, mark, d.Reason)
 	}
-	t.Logf("%d 个明确样例：规则判对 %d、判错 %d、未判定 %d；%d 个歧义样例中 %d 个被规则判定；最慢 %v",
-		clear, right, wrong, clear-right-wrong, len(LoadSamples(t))-clear, ambiguousDecided, slowest)
+	t.Logf("%d 个明确样例：规则判对 %d、判错 %d、未判定 %d；%d 个歧义样例中 %d 个被规则判定；带前后文的 %d 个样例规则判对 %d；最慢 %v",
+		clear, right, wrong, clear-right-wrong, len(LoadSamples(t))-clear-ctxSamples, ambiguousDecided, ctxSamples, ctxRight, slowest)
 	_ = decided
 	if wrong > 1 {
 		t.Errorf("rules decided %d clear samples wrongly", wrong)
@@ -219,5 +229,64 @@ func TestJevClient(t *testing.T) {
 	}
 	if _, err := (Jev{BaseURL: bad.URL}).Judge(context.Background(), in); err == nil {
 		t.Error("no key accepted")
+	}
+}
+
+func TestJevFirst(t *testing.T) {
+	clearCase := Input{Text: "serendipity", Editable: core.EditableNo, TargetLang: "zh-Hans", Candidates: builtin, Default: "translate"}
+	j := &fakeJudge{v: Verdict{Choice: "explain", Confidence: 0.9}}
+	d := Router{Judge: j, JevFirst: true, MinConfidence: 0.6}.Route(context.Background(), clearCase)
+	if d.ID != "explain" || d.By != memory.ByJev || j.asked != 1 {
+		t.Errorf("Jev first: %+v, asked %d", d, j.asked)
+	}
+	// When Jev cannot be used, the rules still decide, and say why.
+	j = &fakeJudge{err: errors.New("down")}
+	d = Router{Judge: j, JevFirst: true, MinConfidence: 0.6}.Route(context.Background(), clearCase)
+	if d.ID != "translate" || d.By != memory.ByRule || d.JevError == "" || j.asked != 1 {
+		t.Errorf("fallback to rules: %+v, asked %d", d, j.asked)
+	}
+	// Jev is asked once, not again after the rules.
+	amb := Input{Text: "明天下午三点开会", Editable: core.EditableYes, TargetLang: "zh-Hans", Candidates: builtin, Default: "explain"}
+	j = &fakeJudge{v: Verdict{Choice: "prompt", Confidence: 0.2}}
+	d = Router{Judge: j, JevFirst: true, MinConfidence: 0.6}.Route(context.Background(), amb)
+	if d.By != memory.ByDefault || j.asked != 1 {
+		t.Errorf("unsure Jev: %+v, asked %d", d, j.asked)
+	}
+}
+
+func TestRichState(t *testing.T) {
+	in := Input{Text: "rug pull", Before: strings.Repeat("前", 500) + "这个项目又是一个", After: "，币价一夜归零" + strings.Repeat("后", 500),
+		App: "com.tinyspeck.slackmacgap", Title: "Secret Project", Editable: core.EditableNo, TargetLang: "zh-Hans", Candidates: builtin, Default: "translate",
+		Prefs: memory.Snapshot{
+			App:         memory.Preference{Scope: "相同应用", Shares: map[string]float64{"explain": 0.75, "translate": 0.25}, Samples: 4},
+			Corrections: []memory.Correction{{From: "translate", To: "explain"}},
+		}}
+	basic, rich := Jev{}.State(in), Jev{Rich: true}.State(in)
+	if strings.Contains(basic, "币价") {
+		t.Error("the basic state sent the text around the selection")
+	}
+	for _, want := range []string{"一个[SELECTION]，币价", "Slack (a chat app)", "read-only", "a language other than the user's",
+		"translate 0.", "explain 0.", "same app: explain 75%, translate 25% (4 explicit choices)", "translate → explain"} {
+		if !strings.Contains(rich, want) {
+			t.Errorf("rich state lacks %q:\n%s", want, rich)
+		}
+	}
+	if strings.Contains(rich, "Secret Project") || strings.Contains(rich, "相同应用") {
+		t.Errorf("rich state sent the title or a Chinese scope:\n%s", rich)
+	}
+	if strings.Count(rich, "前") > maxAround || strings.Count(rich, "后") > maxAround {
+		t.Error("the text around the selection is not bounded")
+	}
+	if s := (Jev{Rich: true, NoHints: true}).State(in); strings.Contains(s, "keyword rules") {
+		t.Error("NoHints sent the rules' scores")
+	}
+	if c := (Jev{Rich: true}).criteria(in); !strings.Contains(c["explain"], "foreign term used inside") {
+		t.Errorf("rich criteria lack guidance: %q", c["explain"])
+	}
+	if c := (Jev{}).criteria(in); c["explain"] != "释义：解释一个词或一句话在上下文里的意思" {
+		t.Errorf("basic criteria changed: %q", c["explain"])
+	}
+	if s := (Jev{Rich: true}).State(Input{Text: "x", Candidates: builtin}); !strings.Contains(s, "not available") || !strings.Contains(s, "none yet") {
+		t.Errorf("empty context: %s", s)
 	}
 }

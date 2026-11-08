@@ -20,12 +20,15 @@ import (
 
 // Input is everything routing may read about one selection.
 type Input struct {
-	Text       string
-	Shape      memory.Shape
-	App        string
-	Title      string // for Jev only when the user allows it
-	Editable   core.Editable
-	TargetLang string
+	Text     string
+	Shape    memory.Shape
+	App      string
+	Title    string // for Jev only when the user allows it
+	Editable core.Editable
+	// Before and After are bounded text around the selection, from the
+	// same field or page. Only Jev's rich state reads them.
+	Before, After string
+	TargetLang    string
 	// Candidates are the features that are on, in their order.
 	Candidates []core.Descriptor
 	// Default is the feature to use when nothing else is known; the
@@ -69,6 +72,10 @@ type Router struct {
 	MinConfidence float64
 	// PreferenceShare is the share a preference needs to decide.
 	PreferenceShare float64
+	// JevFirst asks Jev before the rules, and falls back to the rules,
+	// then memory, when Jev cannot be used. Off in the app: routebench
+	// measures it first (docs/research/2026-11-08-jev-context.md).
+	JevFirst bool
 }
 
 // Thresholds of the rules: a rule decides only when its feature scores at
@@ -103,33 +110,24 @@ func (r Router) route(ctx context.Context, in Input) Decision {
 		in.Shape = memory.ShapeOf(in.Text)
 	}
 
+	var jevErr string
+	if r.JevFirst && r.Judge != nil {
+		var d Decision
+		if d, jevErr = r.ask(ctx, in, ok); d.ID != "" {
+			return d
+		}
+	}
+
 	scores, why := Rules(in)
 	best, second := top2(scores, ok)
 	if best != "" && scores[best] >= ruleScore && scores[best]-scores[second] >= ruleMargin {
-		return Decision{ID: best, By: memory.ByRule, Reason: why[best], Scores: scores}
+		return Decision{ID: best, By: memory.ByRule, Reason: why[best], Scores: scores, JevError: jevErr}
 	}
 
-	var jevErr string
-	if r.Judge != nil {
-		wait := r.Wait
-		if wait <= 0 {
-			wait = 800 * time.Millisecond
-		}
-		jctx, cancel := context.WithTimeout(ctx, wait)
-		v, err := r.Judge.Judge(jctx, in)
-		cancel()
-		switch {
-		// Kinds only: what Jev or its service says may echo the text.
-		case errors.Is(err, context.DeadlineExceeded):
-			jevErr = "Jev 超时"
-		case err != nil:
-			jevErr = "Jev 请求失败"
-		case !ok[v.Choice]:
-			jevErr = "Jev 返回了不在候选中的功能"
-		case v.Confidence < r.MinConfidence:
-			jevErr = fmt.Sprintf("Jev 的把握 %.2f 低于 %.2f", v.Confidence, r.MinConfidence)
-		default:
-			return Decision{ID: v.Choice, By: memory.ByJev, Reason: fmt.Sprintf("Jev 选择，把握 %.2f", v.Confidence), Scores: v.Probabilities}
+	if !r.JevFirst && r.Judge != nil {
+		var d Decision
+		if d, jevErr = r.ask(ctx, in, ok); d.ID != "" {
+			return d
 		}
 	}
 
@@ -148,6 +146,30 @@ func (r Router) route(ctx context.Context, in Input) Decision {
 		}
 	}
 	return Decision{ID: def, By: memory.ByDefault, Reason: "信号不明确，用默认功能", Scores: scores, JevError: jevErr}
+}
+
+// ask asks Jev within r.Wait. It returns Jev's decision, or why Jev was
+// not used.
+func (r Router) ask(ctx context.Context, in Input, ok map[string]bool) (Decision, string) {
+	wait := r.Wait
+	if wait <= 0 {
+		wait = 800 * time.Millisecond
+	}
+	jctx, cancel := context.WithTimeout(ctx, wait)
+	v, err := r.Judge.Judge(jctx, in)
+	cancel()
+	switch {
+	// Kinds only: what Jev or its service says may echo the text.
+	case errors.Is(err, context.DeadlineExceeded):
+		return Decision{}, "Jev 超时"
+	case err != nil:
+		return Decision{}, "Jev 请求失败"
+	case !ok[v.Choice]:
+		return Decision{}, "Jev 返回了不在候选中的功能"
+	case v.Confidence < r.MinConfidence:
+		return Decision{}, fmt.Sprintf("Jev 的把握 %.2f 低于 %.2f", v.Confidence, r.MinConfidence)
+	}
+	return Decision{ID: v.Choice, By: memory.ByJev, Reason: fmt.Sprintf("Jev 选择，把握 %.2f", v.Confidence), Scores: v.Probabilities}, ""
 }
 
 func top2(scores map[string]float64, ok map[string]bool) (string, string) {
